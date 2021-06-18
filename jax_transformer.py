@@ -214,7 +214,7 @@ def main():
         v, g = jax.value_and_grad(loss2)(params, XY)
         return v, opt_update(i, g, opt_state)
 
-    with tqdm.trange(1000, unit'epoch') as pbar:
+    with tqdm.trange(1000, unit='epoch') as pbar:
             for epoch in pbar:
                 for XY in dataset_util.iterbatches(Xtr_bt, batch_size=batch_size,
                         include_final_partial_batch=False):
