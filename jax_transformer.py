@@ -14,6 +14,7 @@ import os
 import sys
 import jax
 import time
+import tqdm
 
 # ================================================================
 # Tf-like framework for Jax
@@ -213,13 +214,13 @@ def main():
         v, g = jax.value_and_grad(loss2)(params, XY)
         return v, opt_update(i, g, opt_state)
 
-    for epoch in range(1000):
-        print('Epoch', epoch)
-        for XY in dataset_util.iterbatches(Xtr_bt, batch_size=batch_size, 
-                include_final_partial_batch=False):
-            tstart = time.time()
-            lossval, opt_state = update(0, opt_state, XY)
-            print(f'loss={lossval:8.3f} dur={time.time()-tstart:8.3f}')
+    with tqdm.trange(1000, unit'epoch') as pbar:
+            for epoch in pbar:
+                for XY in dataset_util.iterbatches(Xtr_bt, batch_size=batch_size,
+                        include_final_partial_batch=False):
+                    tstart = time.time()
+                    lossval, opt_state = update(0, opt_state, XY)
+                    pbar.set_description(f'loss={lossval:8.3f} dur={time.time()-tstart:8.3f}')
 
 if __name__ == '__main__':
     main()
