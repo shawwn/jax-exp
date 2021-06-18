@@ -3,7 +3,7 @@ Jax implementation of transformer language model loosely based on
 https://github.com/openai/finetune-transformer-lm/
 character-based model with simplifications
 """
-from jax.experimental import stax, minmax
+from jax.experimental import stax, optimizers
 import dataset_util
 import functools
 import jax.numpy as np
@@ -203,13 +203,13 @@ def main():
     print_variables(root_cx)
     init_params = root_cx.variables_list()
 
-    opt_init, opt_update = minmax.adam(step_size=3e-4)
+    opt_init, opt_update, get_params = optimizers.adam(step_size=3e-4)
     opt_state = opt_init(init_params)
 
     @jax.jit
     def update(i, opt_state, batch):
         XY, = batch
-        params = minmax.get_params(opt_state)
+        params = get_params(opt_state)
         v, g = jax.value_and_grad(loss2)(params, XY)
         return v, opt_update(i, g, opt_state)
 
