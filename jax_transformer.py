@@ -221,6 +221,8 @@ def main():
                     tstart = time.time()
                     lossval, opt_state = update(0, opt_state, XY)
                     pbar.set_description(f'loss={lossval:8.3f} dur={time.time()-tstart:8.3f}')
+    import pdb; pdb.set_trace()
+    print('Done')
 
 if __name__ == '__main__':
     main()
