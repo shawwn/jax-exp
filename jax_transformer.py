@@ -11,8 +11,6 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.random as npr
 import re
-import os
-import sys
 import jax
 import time
 import tqdm
@@ -181,9 +179,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('text_file')
     parser.add_argument('--load_model')
+    parser.add_argument('--seed', type=int, default=-1)
     args = parser.parse_args()
     text, codebook = dataset_util.process_dataset(args.text_file)
-    npr.seed(0)
+    seed = (npr.randint(2**31) if args.seed < 0 else args.seed)
+    npr.seed(seed)
     n_ctx = 64
     batch_size = 64
     n_head = 4
@@ -210,6 +210,7 @@ def main():
     loss(root_cx, Xtr_bt[:batch_size]) # Just create variables
     root_cx.allow_new = False
     print_variables(root_cx)
+    print(f'seed: {seed:_}')
     init_params = root_cx.variables_list()
 
     opt_init, opt_update, get_params = optimizers.adam(step_size=3e-4)
