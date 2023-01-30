@@ -223,13 +223,31 @@ def main():
         v, g = jax.value_and_grad(loss2)(params, XY)
         return v, opt_update(i, g, opt_state)
 
-    with tqdm.trange(1000, unit='epoch') as pbar:
-            for epoch in pbar:
-                for XY in dataset_util.iterbatches(Xtr_bt, batch_size=batch_size,
-                        include_final_partial_batch=False):
-                    tstart = time.time()
-                    lossval, opt_state = update(0, opt_state, XY)
-                    pbar.set_description(f'loss={lossval:8.3f} dur={time.time()-tstart:8.3f}')
+    def make_pbar(*args, **kws):
+        bar = tqdm.trange if args else tqdm.tqdm
+        return bar(*args, dynamic_ncols=True, mininterval=0.2, leave=True, **kws)
+
+    def tagline(loss):
+        return f'loss: {loss:<8.4f} steps: {pstep.n:<8,} examples: {pexamples.n:<10,}'
+
+    pbar = make_pbar(1000, position=2, unit='epoch')
+    pstep = make_pbar(1_000_000_000, position=1, unit='steps')
+    pexamples = make_pbar(1_000_000_000, position=0, unit='examples')
+    loss_sum = 0.0
+    loss_n = 0
+    for epoch in pbar:
+        for XY in dataset_util.iterbatches(Xtr_bt, batch_size=batch_size,
+                include_final_partial_batch=False):
+            lossval, opt_state = update(0, opt_state, XY)
+            loss_sum += lossval
+            loss_n += 1
+            pstep.update(1)
+            pexamples.update(batch_size)
+            pbar.set_description(tagline(lossval))
+            if pstep.n % 250 == 0 or pstep.n < 1_000 and pstep.n % 25 == 0:
+                pbar.write(tagline(loss_sum / loss_n))
+                loss_sum = 0.0
+                loss_n = 0
     import pdb; pdb.set_trace()
     print('Done')
 
