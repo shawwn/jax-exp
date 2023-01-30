@@ -1,8 +1,9 @@
-import joblib
+# import joblib
 from tabulate import tabulate
 import numpy as np
 import io
 import collections
+import sys
 
 class Codebook(object):
     def __init__(self, tokens):
@@ -22,28 +23,47 @@ class Codebook(object):
         return len(self.tokens)
 
 
-mem = joblib.Memory('/tmp/dataset_util')
+class CodebookGPT2(Codebook):
+    def __init__(self):
+        super().__init__(list(range(50257)))
+
+# mem = joblib.Memory('/tmp/dataset_util')
 
 
-@mem.cache
+# @mem.cache
 def make_codebook(text):
+    print("Making codebook...")
     all_chars = list(sorted(set(text)))
     codebook = Codebook(all_chars)
     return codebook
 
+def make_codebook_gpt2():
+    return CodebookGPT2()
 
-@mem.cache
+# @mem.cache
 def get_zip_ratio(text):
     import zlib
-    text = text.encode()
+    if isinstance(text, str):
+        text = text.encode()
     smalltext = zlib.compress(text, level=-1)
     ratio = len(smalltext) / len(text)
     return ratio
 
 
-def process_dataset(text_file, print_stats=True):
-    with io.open(text_file, encoding='utf-8') as f:
-        text = f.read().strip()
+def process_dataset(text_file, print_stats=False):
+    if text_file.endswith('.tok16'):
+        tokens = np.fromfile(text_file, dtype=np.uint16)
+        return tokens, make_codebook_gpt2()
+    if text_file.endswith('.tok32'):
+        tokens = np.fromfile(text_file, dtype=np.uint32)
+        return tokens, make_codebook_gpt2()
+    try:
+        with io.open(text_file, encoding='utf-8') as f:
+            text = f.read().strip()
+    except UnicodeDecodeError:
+        print('Unicode error; training as non-unicode', file=sys.stderr)
+        with io.open(text_file, mode='rb') as f:
+            text = f.read().strip()
     codebook = make_codebook(text)
     if print_stats:
         token2count = collections.Counter(text)
