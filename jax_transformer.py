@@ -291,6 +291,7 @@ def main():
                     )
     def hparams():
         return dict(
+            batch=f'{args.batch_size}',
             seed=f'{args.seed}',
             lr=f'{args.lr:.1e}',
             n_vocab=codebook.size,
