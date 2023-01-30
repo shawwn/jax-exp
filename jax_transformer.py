@@ -180,12 +180,13 @@ def main():
     parser.add_argument('text_file')
     parser.add_argument('--load_model')
     parser.add_argument('--seed', type=int, default=-1)
+    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('-b', '--batch_size', type=int, default=64)
     args = parser.parse_args()
     text, codebook = dataset_util.process_dataset(args.text_file)
     seed = (npr.randint(2**31) if args.seed < 0 else args.seed)
     npr.seed(seed)
     n_ctx = 64
-    batch_size = 64
     n_head = 4
     n_layer = 4
     n_embd = 128
@@ -207,13 +208,13 @@ def main():
         cx = root_cx.replace_with_list(params)
         return loss(cx, XY_bt)
 
-    loss(root_cx, Xtr_bt[:batch_size]) # Just create variables
+    loss(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
     root_cx.allow_new = False
     print_variables(root_cx)
-    print(f'seed: {seed:_}')
+    print(f'seed: {seed:_} lr: {args.lr:.2e}')
     init_params = root_cx.variables_list()
 
-    opt_init, opt_update, get_params = optimizers.adam(step_size=3e-4)
+    opt_init, opt_update, get_params = optimizers.adam(step_size=args.lr)
     opt_state = opt_init(init_params)
 
     @jax.jit
@@ -225,30 +226,44 @@ def main():
 
     def make_pbar(*args, **kws):
         bar = tqdm.trange if args else tqdm.tqdm
-        return bar(*args, dynamic_ncols=True, mininterval=0.2, leave=True, **kws)
+        return bar(*args, dynamic_ncols=True, mininterval=0.05, leave=True, **kws)
+
+    def timestamp():
+        now = time.time()
+        n = int(now - start)
+        h = n // (60*60)
+        m = (n // 60) % 60
+        s = n % 60
+        return f'time: {h:02}h {m:02}m {s:02}s   seconds: {now - start: < 8,.2f}'
 
     def tagline(loss):
-        return f'loss: {loss:<8.4f} steps: {pstep.n:<8,} examples: {pexamples.n:<10,}'
+        return f'steps: {pstep.n:<8,} examples: {pexamples.n:<10,} loss: {loss:<8.4f} wisdom: {1/loss:<,.2f}'
 
+    start = time.time()
+    loss_sum = 0.0
+    loss_n = 0
+    show_n = int(start)
     pbar = make_pbar(1000, position=2, unit='epoch')
     pstep = make_pbar(1_000_000_000, position=1, unit='steps')
     pexamples = make_pbar(1_000_000_000, position=0, unit='examples')
-    loss_sum = 0.0
-    loss_n = 0
-    for epoch in pbar:
-        for XY in dataset_util.iterbatches(Xtr_bt, batch_size=batch_size,
-                include_final_partial_batch=False):
-            lossval, opt_state = update(0, opt_state, XY)
-            loss_sum += lossval
-            loss_n += 1
-            pstep.update(1)
-            pexamples.update(batch_size)
-            pbar.set_description(tagline(lossval))
-            if pstep.n % 250 == 0 or pstep.n < 1_000 and pstep.n % 25 == 0:
-                pbar.write(tagline(loss_sum / loss_n))
-                loss_sum = 0.0
-                loss_n = 0
-    import pdb; pdb.set_trace()
+    while True:
+        for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
+            try:
+                lossval, opt_state = update(0, opt_state, XY)
+                loss_sum += lossval
+                loss_n += 1
+                pbar.update(1)
+                pstep.update(1)
+                pexamples.update(args.batch_size)
+                pbar.set_description(tagline(lossval))
+                if pstep.n <= 1_000 and pstep.n % 25 == 0 or (now := int(time.time())) > show_n and pstep.n % 250 == 0:
+                    show_n = now
+                    pbar.write(timestamp() + " " + tagline(loss_sum / loss_n))
+                    loss_sum = 0.0
+                    loss_n = 0
+            except KeyboardInterrupt:
+                breakpoint()
+    breakpoint()
     print('Done')
 
 if __name__ == '__main__':
