@@ -316,7 +316,7 @@ def main():
         ptokens.reset(train_token_count())
         for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
             try:
-                lossval, opt_state = update(0, opt_state, XY)
+                lossval, opt_state = update(pstep.n, opt_state, XY)
                 loss_sum += lossval
                 loss_n += 1
                 pstep.set_postfix(stats(lossval), refresh=False)
