@@ -178,23 +178,43 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('text_file')
-    parser.add_argument('--load_model')
+    parser.add_argument('--load_model', default=False)
     parser.add_argument('--seed', type=int, default=-1)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('-b', '--batch_size', type=int, default=64)
+    parser.add_argument('--n_vocab', type=int, default=dataset_util.make_codebook_gpt2().size)
+    parser.add_argument('--n_ctx', type=int, default=64)
+    parser.add_argument('--n_head', type=int, default=4)
+    parser.add_argument('--n_layer', type=int, default=4)
+    parser.add_argument('--n_embd', type=int, default=128)
+    parser.add_argument('--fps', type=int, default=5, help="The number of times per second that the status bar shows loss values, etc")
     args = parser.parse_args()
+    if args.seed < 0:
+        args.seed = npr.randint(2**31)
+    npr.seed(args.seed)
     text, codebook = dataset_util.process_dataset(args.text_file)
-    seed = (npr.randint(2**31) if args.seed < 0 else args.seed)
-    npr.seed(seed)
-    n_ctx = 64
-    n_head = 4
-    n_layer = 4
-    n_embd = 128
-    model = functools.partial(transformer, n_vocab=codebook.size,
-        n_head=n_head, n_layer=n_layer, n_ctx=n_ctx, n_embd=n_embd)
-
-    Xtr_bt, Xte_bt = train_test_split(codebook, text, n_ctx)
+    model = functools.partial(
+        transformer,
+        n_vocab=codebook.size,
+        n_ctx=args.n_ctx,
+        n_head=args.n_head,
+        n_layer=args.n_layer,
+        n_embd=args.n_embd,
+    )
     root_cx = create_root_context()
+
+    if isinstance(text, (str, bytes)):
+        Xtr_bt, Xte_bt = train_test_split(codebook, text, args.n_ctx)
+    else:
+        n = len(text) // args.n_ctx * args.n_ctx
+        Xtr_bt = text[:n].reshape((-1, args.n_ctx))
+        Xte_bt = Xtr_bt
+
+    def train_example_count():
+        return Xtr_bt.shape[0]
+
+    def train_token_count():
+        return np.prod(Xtr_bt.shape)
 
     def loss(cx, XY_bt):
         X_bt = XY_bt[:, :-1]
@@ -211,8 +231,13 @@ def main():
     loss(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
     root_cx.allow_new = False
     print_variables(root_cx)
-    print(f'seed: {seed:_} lr: {args.lr:.2e}')
     init_params = root_cx.variables_list()
+    def print_hparams():
+        print('=' * 50)
+        for k, v in args.__dict__.items():
+            print(f'{k}: {v!r}')
+        print('=' * 50)
+    print_hparams()
 
     opt_init, opt_update, get_params = optimizers.adam(step_size=args.lr)
     opt_state = opt_init(init_params)
@@ -224,9 +249,24 @@ def main():
         v, g = jax.value_and_grad(loss2)(params, XY)
         return v, opt_update(i, g, opt_state)
 
-    def make_pbar(*args, **kws):
-        bar = tqdm.trange if args else tqdm.tqdm
-        return bar(*args, dynamic_ncols=True, mininterval=0.05, leave=True, **kws)
+    bars = {}
+
+    def make_pbar(*argv, **kws):
+        make = tqdm.trange if argv else tqdm.tqdm
+        interval = 1 / args.fps
+        pos = kws.pop('position', len(bars))
+        bar = make(*argv,
+                   position=pos,
+                   dynamic_ncols=True,
+                   # ncols=0,
+                   mininterval=interval,
+                   maxinterval=interval,
+                   leave=True,
+                   smoothing=0.8,
+                   **kws)
+        assert pos not in bars, f"A progress bar is already at position {pos}"
+        bars[pos] = bar
+        return bar
 
     def timestamp():
         now = time.time()
@@ -234,37 +274,69 @@ def main():
         h = n // (60*60)
         m = (n // 60) % 60
         s = n % 60
-        return f'time: {h:02}h {m:02}m {s:02}s   seconds: {now - start: < 8,.2f}'
+        def num(x, suffix):
+            if x != 0:
+                return f'{x: >2}{suffix}'
+            else:
+                return ' ' * (len(suffix) + 2)
+        ts = num(h, "h") + num(m, "m") + num(s, "s")
+        ts = f'[{h:02}:{m:02}:{s:02}] '
+        return f'{ts}  time: {now - start: < 8,.2f}'
 
-    def tagline(loss):
-        return f'steps: {pstep.n:<8,} examples: {pexamples.n:<10,} loss: {loss:<8.4f} wisdom: {1/loss:<,.2f}'
+    def stats(loss):
+        return dict(steps=f'{pstep.n:<8,}',
+                    examples=f'{pexamples.n:<10,}',
+                    loss=f'{loss:<8.4f}',
+                    wisdom=f'{10/loss:<8,.2f}',
+                    )
+    def hparams():
+        return dict(
+            seed=f'{args.seed}',
+            lr=f'{args.lr:.1e}',
+            n_vocab=codebook.size,
+            n_ctx=args.n_ctx,
+            n_head=args.n_head,
+            n_layer=args.n_layer,
+            n_embd=args.n_embd,
+        )
+    def tagline(h: dict):
+        return ' '.join([f'{k}: {v}' for k, v in h.items()])
 
     start = time.time()
     loss_sum = 0.0
     loss_n = 0
     show_n = int(start)
-    pbar = make_pbar(1000, position=2, unit='epoch')
-    pstep = make_pbar(1_000_000_000, position=1, unit='steps')
-    pexamples = make_pbar(1_000_000_000, position=0, unit='examples')
+    pstep = make_pbar(unit='steps', unit_scale=True)
+    pexamples = make_pbar(unit='examples', unit_scale=True)
+    ptokens = make_pbar(unit='tokens', unit_scale=True)
+    pepoch = make_pbar(unit='epochs')
+    pwrite = pstep
     while True:
+        ptokens.reset(train_token_count())
         for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
             try:
                 lossval, opt_state = update(0, opt_state, XY)
                 loss_sum += lossval
                 loss_n += 1
-                pbar.update(1)
-                pstep.update(1)
+                pstep.set_postfix(stats(lossval), refresh=False)
+                pexamples.set_postfix(hparams(), refresh=False)
                 pexamples.update(args.batch_size)
-                pbar.set_description(tagline(lossval))
-                if pstep.n <= 1_000 and pstep.n % 25 == 0 or (now := int(time.time())) > show_n and pstep.n % 250 == 0:
-                    show_n = now
-                    pbar.write(timestamp() + " " + tagline(loss_sum / loss_n))
+                ptokens.update(args.batch_size * args.n_ctx)
+                pstep.update(1)
+                def need_show(n):
+                    if n <= 1_000 and n % 25 == 0:
+                        return True
+                    if int(time.time()) > show_n and n % 250 == 0:
+                        return True
+                if need_show(pstep.n):
+                    pwrite.write(timestamp() + " " + tagline(stats(loss_sum / loss_n)))
                     loss_sum = 0.0
                     loss_n = 0
+                    show_n = int(time.time())
             except KeyboardInterrupt:
-                breakpoint()
-    breakpoint()
-    print('Done')
+                with pwrite.external_write_mode():
+                    breakpoint()
+        pepoch.update(1)
 
 if __name__ == '__main__':
     main()
