@@ -3,7 +3,16 @@ Jax implementation of transformer language model loosely based on
 https://github.com/openai/finetune-transformer-lm/
 character-based model with simplifications
 """
-from jax.example_libraries import optimizers
+from __future__ import annotations
+
+import os
+# only preallocate 10% of memory
+os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '.10')
+# # don't preallocate anything
+# os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+
+# from jax.example_libraries import optimizers
+import optimizers
 import jax._src.nn.functions as F
 import dataset_util
 import functools
@@ -14,19 +23,21 @@ import re
 import jax
 import time
 import tqdm
+from typing import TYPE_CHECKING, cast
 
 # ================================================================
 # Tf-like framework for Jax
 # ================================================================
 
-def create_root_context():
-    return VariableContext({}, '')
+def create_context(args: Args, prefix=''):
+    return VariableContext({}, prefix, args)
 
 class VariableContext(object):
-    def __init__(self, name2val, prefix, allow_new=True):
+    def __init__(self, name2val, prefix, args: Args, allow_new=True):
         self.name2val = name2val
         self.prefix = prefix
         self.allow_new = allow_new
+        self.args = args
 
     def scope(self, name):
         return VariableContext(self.name2val, 
@@ -55,7 +66,7 @@ class VariableContext(object):
     def replace_with_list(self, newlist):
         assert len(newlist) == len(self.name2val)
         name2val = {k : v for (k, v) in zip(self.name2val.keys(), newlist)}
-        return VariableContext(name2val, self.prefix, self.allow_new)
+        return VariableContext(name2val, self.prefix, self.args, allow_new=self.allow_new)
 
 def print_variables(cx):
     for (name, val) in sorted(cx.name2val.items()):
@@ -86,7 +97,7 @@ def _norm(x, *, axis, g=None, b=None, e=1e-5):
         x = x * g + b
     return x
 
-def norm(cx, x, axis=-1):
+def norm(cx: VariableContext, x, axis=-1):
     n_state = x.shape[axis]
     g = cx.get_variable("g", initializer=lambda : np.ones(n_state, 'f'))
     b = cx.get_variable("b", initializer=lambda : np.zeros(n_state, 'f'))
@@ -101,13 +112,13 @@ def mask_attn_weights(w):
 
 def _attn(Q_bhtr, K_bhrt, V_bhtr):
     R = Q_bhtr.shape[-1]
-    W_bhtt = jnp.matmul(Q_bhtr, K_bhrt) / jnp.sqrt(R)
+    W_bhtt = jnp.matmul(Q_bhtr, K_bhrt) * (1 / np.sqrt(R))
     W_bhtt = mask_attn_weights(W_bhtt)
     W_bhtt = F.softmax(W_bhtt, axis=-1)
     A_bhtr = jnp.matmul(W_bhtt, V_bhtr)
     return A_bhtr
 
-def dense(cx, X_btk, F):
+def dense(cx: VariableContext, X_btk, F):
     B, T, K = X_btk.shape
     X_bt_k = jnp.reshape(X_btk, (-1, K))
     W_kf = cx.get_variable("w", initializer=lambda : normc(K, F))
@@ -115,7 +126,7 @@ def dense(cx, X_btk, F):
     Y_bt_f = jnp.matmul(X_bt_k, W_kf) + b_f
     return jnp.reshape(Y_bt_f, (B, T, F))
 
-def attn(cx, X_btk, n_state, n_head):
+def attn(cx: VariableContext, X_btk, n_state, n_head):
     B, T, _K = X_btk.shape
     assert n_state % n_head==0
     QKV_b_t_3s = dense(cx.scope('c_attn'), X_btk, n_state * 3)
@@ -130,13 +141,13 @@ def attn(cx, X_btk, n_state, n_head):
     P_bts = dense(cx.scope('c_proj'), A_bts, n_state)
     return P_bts
 
-def mlp(cx, X_bts, *, n_hid):
+def mlp(cx: VariableContext, X_bts, *, n_hid):
     S = X_bts.shape[-1]
     H_bth = F.relu(dense(cx.scope('c_fc'), X_bts, n_hid))
     Y_bts = dense(cx.scope('c_proj'), H_bth, S)
     return Y_bts
 
-def block(cx, X_bts, *, n_head):
+def block(cx: VariableContext, X_bts, *, n_head):
     _B, _T, S = X_bts.shape
     A_bts = attn(cx.scope('attn'), X_bts, S, n_head)
     N_bts = norm(cx.scope('ln_1'), X_bts + A_bts, axis=-1)
@@ -144,7 +155,7 @@ def block(cx, X_bts, *, n_head):
     Y_bts = norm(cx.scope('ln_2'), N_bts + M_bts, axis=-1)
     return Y_bts
 
-def transformer(cx, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
+def transformer(cx: VariableContext, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
     tok_bt = jnp.asarray(tok_bt)
     B, T = tok_bt.shape
     pos_bt = jax.lax.broadcasted_iota(jnp.int32, (B, T), 1)
@@ -174,6 +185,19 @@ def train_test_split(codebook, text, n_ctx):
     return (np.array([flatdata[s: s + chunksize] for s in starts_train]),
             np.array([flatdata[s: s + chunksize] for s in starts_test]))
 
+class Args:
+    text_file: str
+    load_model: bool
+    seed: int
+    lr: float
+    batch_size: int
+    n_vocab: int
+    n_ctx: int
+    n_head: int
+    n_layer: int
+    n_embd: int
+    fps: float
+
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -187,8 +211,8 @@ def main():
     parser.add_argument('--n_head', type=int, default=4)
     parser.add_argument('--n_layer', type=int, default=4)
     parser.add_argument('--n_embd', type=int, default=128)
-    parser.add_argument('--fps', type=int, default=5, help="The number of times per second that the status bar shows loss values, etc")
-    args = parser.parse_args()
+    parser.add_argument('--fps', type=float, default=5.0, help="The number of times per second that the status bar shows loss values, etc")
+    args: Args = cast(Args, parser.parse_args())
     if args.seed < 0:
         args.seed = npr.randint(2**31)
     npr.seed(args.seed)
@@ -201,7 +225,7 @@ def main():
         n_layer=args.n_layer,
         n_embd=args.n_embd,
     )
-    root_cx = create_root_context()
+    root_cx = create_context(args)
 
     if isinstance(text, (str, bytes)):
         Xtr_bt, Xte_bt = train_test_split(codebook, text, args.n_ctx)
@@ -216,7 +240,7 @@ def main():
     def train_token_count():
         return np.prod(Xtr_bt.shape)
 
-    def loss(cx, XY_bt):
+    def loss(cx: VariableContext, XY_bt):
         X_bt = XY_bt[:, :-1]
         B, T = X_bt.shape
         Y_bt = XY_bt[:, 1:]
@@ -224,6 +248,7 @@ def main():
         loglosses_bt = - logprobs_btq.reshape((B*T, -1))[
             jnp.arange(B * T), Y_bt.reshape((-1,))]
         return loglosses_bt.mean()
+
     def loss2(params, XY_bt):
         cx = root_cx.replace_with_list(params)
         return loss(cx, XY_bt)
@@ -311,7 +336,7 @@ def main():
     pexamples = make_pbar(unit='examples', unit_scale=True)
     ptokens = make_pbar(unit='tokens', unit_scale=True)
     pepoch = make_pbar(unit='epochs')
-    pwrite = pstep
+    pwrite = pepoch
     while True:
         ptokens.reset(train_token_count())
         for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
