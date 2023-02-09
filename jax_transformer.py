@@ -240,9 +240,9 @@ def main():
         loglosses_bt_ = loglosses_bt_q[jnp.arange(BT), Y_bt_]
         return loglosses_bt_.mean()
 
-    # def loss2(params, XY_bt):
-    #     cx = root_cx.replace_with_list(params)
-    #     return loss(cx, XY_bt)
+    def loss2(params, XY_bt):
+        cx = root_cx.replace_with_list(params)
+        return loss(cx, XY_bt)
 
 
     loss(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
@@ -266,11 +266,11 @@ def main():
         print('=' * 50)
     print_hparams()
 
-    # opt_init, opt_update, get_params = optimizers.adam_std(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    opt_init, opt_update, get_params = optimizers.adam_std(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp_v2(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp_volavg(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
-    opt_init, opt_update, get_params = optimizers.adamsp_1bit(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    # opt_init, opt_update, get_params = optimizers.adamsp_1bit(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     opt_state = opt_init(init_params)
 
     def each(f, x):
@@ -307,8 +307,8 @@ def main():
         (i, new_state), _ = jax.lax.scan(inner, (i, opt_state), gs)
         return n, vs, new_state
 
-    @jax.jit
-    def update(i, opt_state, batch):
+    # @jax.jit
+    def update_old(i, opt_state, batch):
         XY, = batch
         params = get_params(opt_state)
         lossfn = root_cx.transform(loss)
@@ -319,6 +319,13 @@ def main():
         # g = jax.tree_map(lambda grad: grad * n, g)
         new_state = opt_update(i, g, opt_state)
         return 1, [v], new_state
+
+    @jax.jit
+    def update(i, opt_state, batch):
+        XY, = batch
+        params = get_params(opt_state)
+        v, g = jax.value_and_grad(loss2)(params, XY)
+        return v, opt_update(i, g, opt_state)
 
     bars = {}
 
@@ -391,8 +398,10 @@ def main():
         pepoch.set_postfix(dict(desc=repr(args.desc), text_file=text_file))
         for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
             try:
-                k, lossvals, opt_state = update(pstep.n, opt_state, XY)
-                k = np.asarray(k).item()
+                lossvals, opt_state = update(pstep.n, opt_state, XY)
+                k, lossvals = 1, [lossvals]
+                # k, lossvals, opt_state = update(pstep.n, opt_state, XY)
+                # k = np.asarray(k).item()
                 loss_sum += sum(lossvals)
                 loss_n += len(lossvals)
                 pstep.set_postfix(stats(max(lossvals)), refresh=False)
