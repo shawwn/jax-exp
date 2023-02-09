@@ -8,6 +8,9 @@ from jax._src.api_util import (
     validate_argnames, validate_argnums, check_callable, resolve_argnums,
     FLAGS)
 
+del ad
+import jaxy_ad
+
 
 # def value_and_grad(f):
 #   return jax.value_and_grad(f)
@@ -165,12 +168,12 @@ def _vjp(fun: lu.WrappedFun, *primals, has_aux=False, reduce_axes=()):
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primal, out_vjp = ad.vjp(
+    out_primal, out_vjp = jaxy_ad.vjp(
         flat_fun, primals_flat, reduce_axes=reduce_axes)
     out_tree = out_tree()
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primal, out_vjp, aux = ad.vjp(
+    out_primal, out_vjp, aux = jaxy_ad.vjp(
         flat_fun, primals_flat, has_aux=True, reduce_axes=reduce_axes)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)

@@ -19,7 +19,7 @@ def vjp(traceable, primals, has_aux=False, reduce_axes=()):
 
   # Ensure that vjp_ is a PyTree so that we can pass it from the forward to the backward
   # pass in a custom VJP.
-  vjp_ =  Partial(partial(unbound_vjp, pvals, jaxpr), consts)
+  vjp_ = Partial(partial(unbound_vjp, pvals, jaxpr), consts)
   if not has_aux:
     return out_primals, vjp_
   else:
@@ -72,39 +72,56 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
       primal_env[v] = val
 
   primal_env: Dict[Any, Any] = {}
-  map(write_primal, jaxpr.constvars, consts)
+
+  # map(write_primal, jaxpr.constvars, consts)
+  for v, val in zip(jaxpr.constvars, consts):
+    write_primal(v, val)
+
   # FIXME: invars can contain both primal and tangent values, and this line
   #        forces primal_in to contain UndefinedPrimals for tangent values!
-  map(write_primal, jaxpr.invars, primals_in)
+  # map(write_primal, jaxpr.invars, primals_in)
+  for v, val in zip(jaxpr.invars, primals_in):
+    write_primal(v, val)
 
   ct_env: Dict[Any, Any] = {}
-  ctx = (source_info_util.transform_name_stack('transpose') if transform_stack
-         else contextlib.nullcontext())
+  ctx = (source_info_util.transform_name_stack('transpose') if transform_stack else contextlib.nullcontext())
   with ctx:
-    map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
-    for eqn in jaxpr.eqns[::-1]:
+
+    # map(partial(write_cotangent, 'outvars'), jaxpr.outvars, cotangents_in)
+    for v, ct in zip(jaxpr.outvars, cotangents_in):
+      write_cotangent('outvars', v, ct)
+
+    for eqn in reversed(jaxpr.eqns):
+      eqn: core.JaxprEqn
+
       invals = map(read_primal, eqn.invars)
+
       if eqn.primitive.multiple_results:
         cts_in = map(read_cotangent, eqn.outvars)
       else:
         cts_in, = map(read_cotangent, eqn.outvars)
+
       name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
       with source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack):
+
         if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
+
           cts_in_avals = [v.aval for v in eqn.outvars]
           params = dict(eqn.params)
           call_jaxpr = params.pop('call_jaxpr')
-          cts_out = get_primitive_transpose(eqn.primitive)(
-              params, call_jaxpr, invals, cts_in, cts_in_avals, reduce_axes)
+          cts_out = get_primitive_transpose(eqn.primitive)(params, call_jaxpr, invals, cts_in, cts_in_avals, reduce_axes)
+
         elif eqn.primitive in reducing_transposes:
-          cts_out = reducing_transposes[eqn.primitive](
-              reduce_axes, cts_in, *invals, **eqn.params)
+          cts_out = reducing_transposes[eqn.primitive](reduce_axes, cts_in, *invals, **eqn.params)
         else:
-          cts_out = get_primitive_transpose(eqn.primitive)(
-              cts_in, *invals, **eqn.params)
+          cts_out = get_primitive_transpose(eqn.primitive)(cts_in, *invals, **eqn.params)
+
         cts_out = [Zero(v.aval) for v in eqn.invars] if cts_out is Zero else cts_out
+
         # FIXME: Some invars correspond to primals!
-        map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
+        # map(partial(write_cotangent, eqn.primitive), eqn.invars, cts_out)
+        for v, ct in zip(eqn.invars, cts_out):
+          write_cotangent(eqn.primitive, v, ct)
 
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
