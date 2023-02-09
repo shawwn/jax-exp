@@ -209,6 +209,7 @@ def main():
     parser.add_argument('--adam_eps', type=float, default=1e-8, help="Adam's epsilon parameter")
     parser.add_argument('--adam_b1', type=float, default=0.9, help="Adam's beta1 parameter")
     parser.add_argument('--adam_b2', type=float, default=0.999, help="Adam's beta2 parameter")
+    parser.add_argument('-o', '--opt', '--optimizer', type=str, default='adam', help="optimizer. adam/adamsp/sgd")
     parser.add_argument('--dtype', type=str, default='fp32', help="dtype of params. fp32, fp16, or bf16")
     args = parser.parse_args()
     if args.seed < 0:
@@ -284,7 +285,14 @@ def main():
     # opt_init, opt_update, get_params = optimizers.adamsp(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp_v2(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp_volavg(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
-    opt_init, opt_update, get_params = optimizers.adamsp_1bit(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    if args.opt == 'adam':
+        opt_init, opt_update, get_params = optimizers.adam_std(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    elif args.opt == 'adamsp':
+        opt_init, opt_update, get_params = optimizers.adamsp_1bit(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    elif args.opt == 'sgd':
+        opt_init, opt_update, get_params = optimizers.sgd(step_size=args.lr)
+    else:
+        assert False, "Invalid --opt. Expected adam/adamsp/sgd"
     opt_state = opt_init(init_params)
 
     def each(f, x):
