@@ -87,7 +87,7 @@ def reshape_seqs(X, seq_size):
 
 def train_test_split(codebook, text, n_ctx, train_percentage=0.75):
     if hasattr(text, 'shape'):
-        X_bt = reshape_seqs(text, n_ctx)
+        X_bt = reshape_seqs(text, n_ctx + 1)
         train_end = int(len(X_bt) * train_percentage)
         Xtr_bt = X_bt[:train_end]
         Xte_bt = X_bt[train_end:]
