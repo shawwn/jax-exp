@@ -162,22 +162,10 @@ def transformer(cx, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
     logprobs_btq = F.log_softmax(logits_btq)
     return logprobs_btq
 
-def train_test_split(codebook, text, n_ctx):
-    # TODO start at every character
-    flatdata = np.array([codebook.token2idx(token) for token in text])
-    splits = [mo.end() for mo in re.finditer(r'\n\n|\. |; |: ',text)]
-    starts = np.concatenate([[0], splits])
-    teststart = starts[int(len(starts) * 0.75)]
-    chunksize = n_ctx + 1
-    starts_train = starts[starts + chunksize <= teststart]
-    starts_test = starts[starts + chunksize <= len(flatdata)]
-    return (np.array([flatdata[s: s + chunksize] for s in starts_train]),
-            np.array([flatdata[s: s + chunksize] for s in starts_test]))
-
 def main():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('text_file')
+    parser.add_argument('text_files', nargs='+')
     parser.add_argument('--load_model', default=False)
     parser.add_argument('--seed', type=int, default=-1)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -192,7 +180,7 @@ def main():
     if args.seed < 0:
         args.seed = npr.randint(2**31)
     npr.seed(args.seed)
-    text, codebook = dataset_util.process_dataset(args.text_file)
+    text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file := np.random.choice(args.text_files), args.n_ctx)
     model = functools.partial(
         transformer,
         n_vocab=codebook.size,
@@ -202,13 +190,6 @@ def main():
         n_embd=args.n_embd,
     )
     root_cx = create_root_context()
-
-    if isinstance(text, (str, bytes)):
-        Xtr_bt, Xte_bt = train_test_split(codebook, text, args.n_ctx)
-    else:
-        n = len(text) // args.n_ctx * args.n_ctx
-        Xtr_bt = text[:n].reshape((-1, args.n_ctx))
-        Xte_bt = Xtr_bt
 
     def train_example_count():
         return Xtr_bt.shape[0]
@@ -314,6 +295,7 @@ def main():
     pwrite = pstep
     while True:
         ptokens.reset(train_token_count())
+        pepoch.set_postfix(dict(text_file=text_file))
         for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
             try:
                 lossval, opt_state = update(pstep.n, opt_state, XY)
@@ -338,6 +320,8 @@ def main():
                 with pwrite.external_write_mode():
                     breakpoint()
         pepoch.update(1)
+        # new epoch; load a different text file.
+        text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file := np.random.choice(args.text_files), args.n_ctx)
 
 if __name__ == '__main__':
     main()

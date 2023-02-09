@@ -4,6 +4,7 @@ import numpy as np
 import io
 import collections
 import sys
+import re
 
 class Codebook(object):
     def __init__(self, tokens):
@@ -32,7 +33,6 @@ class CodebookGPT2(Codebook):
 
 # @mem.cache
 def make_codebook(text):
-    print("Making codebook...")
     all_chars = list(sorted(set(text)))
     codebook = Codebook(all_chars)
     return codebook
@@ -77,6 +77,36 @@ def process_dataset(text_file, print_stats=False):
             ('Zip', zipratio * np.log(256))
         ]))
     return text, codebook
+
+
+def reshape_seqs(X, seq_size):
+    n = (len(X) // seq_size) * seq_size
+    return X[:n].reshape((-1, seq_size))
+
+
+def train_test_split(codebook, text, n_ctx, train_percentage=0.75):
+    if hasattr(text, 'shape'):
+        X_bt = reshape_seqs(text, n_ctx)
+        train_end = int(len(X_bt) * train_percentage)
+        Xtr_bt = X_bt[:train_end]
+        Xte_bt = X_bt[train_end:]
+        return Xtr_bt, Xte_bt
+    # TODO start at every character
+    flatdata = np.array([codebook.token2idx(token) for token in text])
+    splits = [mo.end() for mo in re.finditer(r'\n\n|\. |; |: ',text)]
+    starts = np.concatenate([[0], splits])
+    teststart = starts[int(len(starts) * train_percentage)]
+    chunksize = n_ctx + 1
+    starts_train = starts[starts + chunksize <= teststart]
+    starts_test = starts[starts + chunksize <= len(flatdata)]
+    return (np.array([flatdata[s: s + chunksize] for s in starts_train]),
+            np.array([flatdata[s: s + chunksize] for s in starts_test]))
+
+def load_dataset(text_file, n_ctx):
+    text, codebook = process_dataset(text_file)
+    Xtr_bt, Xte_bt = train_test_split(codebook, text, n_ctx)
+    return text, codebook, Xtr_bt, Xte_bt
+
 
 def iterbatches(*arrays, num_batches=None, batch_size=None, shuffle=True, include_final_partial_batch=True):
     assert (num_batches is None) != (batch_size is None), 'Provide num_batches or batch_size, but not both'
