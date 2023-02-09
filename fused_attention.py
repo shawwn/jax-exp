@@ -192,6 +192,7 @@ def fused_attention(q: jnp.ndarray, k: jnp.ndarray,
       **metaparams)
   return output
 
+# TODO: port the backwards pass from https://github.com/HazyResearch/flash-attention/blob/main/flash_attn/flash_attn_triton.py
 
 if __name__ == "__main__":
   q_key, k_key, v_key = random.split(random.PRNGKey(0), 3)
