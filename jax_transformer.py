@@ -162,7 +162,7 @@ def block(cx, X_bts, *, n_head):
     X_bts = X_bts + M_bts
     return X_bts
 
-def transformer(cx, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
+def transformer(cx: VariableContext, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd, checkpoint=False):
     tok_bt = jnp.asarray(tok_bt)
     BT = tok_bt.shape
     pos_bt = jax.lax.broadcasted_iota(jnp.int32, BT, len(BT) - 1)
@@ -170,12 +170,17 @@ def transformer(cx, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
     posembs_pe = cx.get_variable('posembs', initializer=lambda: normc(n_ctx, n_embd) * 0.1)
     tokenemb_bte = tokenembs_qe[tok_bt]
     posemb_bte = posembs_pe[pos_bt]
-    last_bts = tokenemb_bte + posemb_bte
+    H_bts = tokenemb_bte + posemb_bte
+
     for layer in range(n_layer):
-        last_bts = block(cx.scope(f'h{layer:02d}'), last_bts, n_head=n_head)
-    logits_btq = jnp.matmul(last_bts, tokenembs_qe.T)
-    logprobs_btq = F.log_softmax(logits_btq)
-    return logprobs_btq
+        if checkpoint:
+            params = cx.variables_list()
+            block_fn = functools.partial(cx.scope(f'h{layer:02d}').transform(block), n_head=n_head)
+            H_bts = jax.checkpoint(block_fn)(params, H_bts)
+        else:
+            H_bts = block(cx.scope(f'h{layer:02d}'), H_bts, n_head=n_head)
+    logits_btq = jnp.matmul(H_bts, tokenembs_qe.T)
+    return logits_btq
 
 def main():
     import argparse
@@ -242,7 +247,7 @@ def main():
 
     def loss2(params, XY_bt):
         cx = root_cx.replace_with_list(params)
-        return loss(cx, XY_bt)
+        return loss(cx, XY_bt, checkpoint=True)
 
 
     loss(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
