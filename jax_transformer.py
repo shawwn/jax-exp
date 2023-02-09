@@ -150,7 +150,7 @@ def attn(cx, X_btk, n_state, n_head):
 
 def mlp(cx, X_bts, *, n_hid):
     S = X_bts.shape[-1]
-    H_bth = F.relu(dense(cx.scope('c_fc'), X_bts, n_hid))
+    H_bth = F.gelu(dense(cx.scope('c_fc'), X_bts, n_hid))
     Y_bts = dense(cx.scope('c_proj'), H_bth, S)
     return Y_bts
 
