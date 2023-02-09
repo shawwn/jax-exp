@@ -33,7 +33,6 @@ class CodebookGPT2(Codebook):
 
 
 # @mem.cache
-@functools.lru_cache(maxsize=None)
 def make_codebook(text):
     all_chars = list(sorted(set(text)))
     codebook = Codebook(all_chars)
