@@ -179,6 +179,7 @@ def transformer(cx: VariableContext, tok_bt, *, n_vocab, n_head, n_layer, n_ctx,
             H_bts = jax.checkpoint(block_fn)(params, H_bts)
         else:
             H_bts = block(cx.scope(f'h{layer:02d}'), H_bts, n_head=n_head)
+    H_bts = norm(cx.scope('ln_f'), H_bts)
     logits_btq = jnp.matmul(H_bts, tokenembs_qe.T)
     return logits_btq
 
