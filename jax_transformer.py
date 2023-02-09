@@ -169,7 +169,11 @@ def main():
     parser.add_argument('--load_model', default=False)
     parser.add_argument('--seed', type=int, default=-1)
     parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--adam_eps', type=float, default=1e-8, help="Adam's epsilon parameter")
+    parser.add_argument('--adam_b1', type=float, default=0.9, help="Adam's beta1 parameter")
+    parser.add_argument('--adam_b2', type=float, default=0.999, help="Adam's beta2 parameter")
     parser.add_argument('-b', '--batch_size', type=int, default=64)
+    parser.add_argument('-d', '--desc', '--description', type=str, default="")
     parser.add_argument('--n_vocab', type=int, default=dataset_util.make_codebook_gpt2().size)
     parser.add_argument('--n_ctx', type=int, default=64)
     parser.add_argument('--n_head', type=int, default=4)
@@ -220,7 +224,7 @@ def main():
         print('=' * 50)
     print_hparams()
 
-    opt_init, opt_update, get_params = optimizers.adam(step_size=args.lr)
+    opt_init, opt_update, get_params = optimizers.adam(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     opt_state = opt_init(init_params)
 
     @jax.jit
@@ -273,8 +277,11 @@ def main():
     def hparams():
         return dict(
             batch=f'{args.batch_size}',
-            seed=f'{args.seed}',
+            # seed=f'{args.seed}',
             lr=f'{args.lr:.1e}',
+            b1=args.adam_b1,
+            b2=args.adam_b2,
+            eps=args.adam_eps,
             n_vocab=codebook.size,
             n_ctx=args.n_ctx,
             n_head=args.n_head,
@@ -295,7 +302,7 @@ def main():
     pwrite = pstep
     while True:
         ptokens.reset(train_token_count())
-        pepoch.set_postfix(dict(text_file=text_file))
+        pepoch.set_postfix(dict(desc=repr(args.desc), seed=f'{args.seed}', text_file=text_file))
         for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
             try:
                 lossval, opt_state = update(pstep.n, opt_state, XY)
@@ -307,7 +314,7 @@ def main():
                 ptokens.update(args.batch_size * args.n_ctx)
                 pstep.update(1)
                 def need_show(n):
-                    if n <= 1_000 and n % 25 == 0:
+                    if n <= 1_000 and n % 50 == 0:
                         return True
                     if int(time.time()) > show_n and n % 250 == 0:
                         return True
@@ -318,6 +325,8 @@ def main():
                     show_n = int(time.time())
             except KeyboardInterrupt:
                 with pwrite.external_write_mode():
+                    print("")
+                    print(repr(args.desc), f'seed={args.seed}', hparams())
                     breakpoint()
         pepoch.update(1)
         # new epoch; load a different text file.
