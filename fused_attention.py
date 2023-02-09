@@ -139,6 +139,9 @@ def fused_attention(q: jnp.ndarray, k: jnp.ndarray,
                     v: jnp.ndarray) -> jnp.ndarray:
   """Flash attention."""
   block_size = 128
+  q = q.astype(jnp.float16)
+  k = k.astype(jnp.float16)
+  v = v.astype(jnp.float16)
   grid = (triton.cdiv(q.shape[2], block_size), q.shape[0] * q.shape[1])
   out_shape = [
       jax.ShapeDtypeStruct(
