@@ -330,7 +330,10 @@ def main():
                     breakpoint()
         pepoch.update(1)
         # new epoch; load a different text file.
-        text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file := np.random.choice(args.text_files), args.n_ctx)
+        text_file2 = np.random.choice(args.text_files)
+        if text_file2 != text_file:
+            text_file = text_file2
+            text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file, args.n_ctx)
 
 if __name__ == '__main__':
     main()
