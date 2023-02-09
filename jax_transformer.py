@@ -266,11 +266,11 @@ def main():
         print('=' * 50)
     print_hparams()
 
-    # opt_init, opt_update, get_params = optimizers.adam_std(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    opt_init, opt_update, get_params = optimizers.adam_std(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp_v2(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     # opt_init, opt_update, get_params = optimizers.adamsp_volavg(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
-    opt_init, opt_update, get_params = optimizers.adamsp_1bit(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    # opt_init, opt_update, get_params = optimizers.adamsp_1bit(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
     opt_state = opt_init(init_params)
 
     def each(f, x):
