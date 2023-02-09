@@ -156,11 +156,11 @@ def mlp(cx, X_bts, *, n_hid):
 
 def block(cx, X_bts, *, n_head):
     *_BT, S = X_bts.shape
-    A_bts = attn(cx.scope('attn'), X_bts, S, n_head)
-    N_bts = norm(cx.scope('ln_1'), X_bts + A_bts, axis=-1)
-    M_bts = mlp(cx.scope('mlp'), N_bts, n_hid=S * 4)
-    Y_bts = norm(cx.scope('ln_2'), N_bts + M_bts, axis=-1)
-    return Y_bts
+    A_bts = attn(cx.scope('attn'), norm(cx.scope('ln_1'), X_bts), S, n_head)
+    X_bts = X_bts + A_bts
+    M_bts = mlp(cx.scope('mlp'), norm(cx.scope('ln_2'), X_bts), n_hid=S * 4)
+    X_bts = X_bts + M_bts
+    return X_bts
 
 def transformer(cx, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
     tok_bt = jnp.asarray(tok_bt)
