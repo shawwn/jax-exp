@@ -98,8 +98,8 @@ def _norm(x, *, axis, g=None, b=None, e=1e-5):
 
 def norm(cx, x, axis=-1):
     n_state = x.shape[axis]
-    g = cx.get_variable("g", initializer=lambda : np.ones(n_state, 'f'))
-    b = cx.get_variable("b", initializer=lambda : np.zeros(n_state, 'f'))
+    g = cx.get_variable("g", initializer=lambda: np.ones(n_state, 'f'))
+    b = cx.get_variable("b", initializer=lambda: np.zeros(n_state, 'f'))
     return _norm(x, g=g, b=b, axis=axis)
 
 def mask_attn_weights(w):
@@ -122,8 +122,8 @@ def _attn(Q_bhtr, K_bhrt, V_bhtr):
 def dense(cx, X_btk, F):
     *BT, K = X_btk.shape
     X_bt_k = jnp.reshape(X_btk, (-1, K))
-    W_kf = cx.get_variable("w", initializer=lambda : normc(K, F))
-    b_f = cx.get_variable("b", initializer=lambda : np.zeros(F, 'f'))
+    W_kf = cx.get_variable("w", initializer=lambda: normc(K, F))
+    b_f = cx.get_variable("b", initializer=lambda: np.zeros(F, 'f'))
     Y_bt_f = jnp.matmul(X_bt_k, W_kf) + b_f
     return jnp.reshape(Y_bt_f, (*BT, F))
 
