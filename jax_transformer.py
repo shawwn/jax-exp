@@ -113,7 +113,7 @@ def mask_attn_weights(w):
 
 def _attn(Q_bhtr, K_bhrt, V_bhtr):
     R = Q_bhtr.shape[-1]
-    W_bhtt = jnp.matmul(Q_bhtr, K_bhrt) / jnp.sqrt(R)
+    W_bhtt = jnp.matmul(Q_bhtr, K_bhrt) * jnp.array(1.0 / np.sqrt(R), dtype=Q_bhtr.dtype)
     W_bhtt = mask_attn_weights(W_bhtt)
     W_bhtt = F.softmax(W_bhtt, axis=-1)
     A_bhtr = jnp.matmul(W_bhtt, V_bhtr)
