@@ -217,27 +217,27 @@ def main():
     def train_token_count():
         return np.prod(Xtr_bt.shape)
 
-    def loss_batch(cx, XY_bt):
-        X_bt, Y_bt = XY_bt[:, :-1], XY_bt[:, 1:]
-        logprobs_btq = model(cx, X_bt)
-        loglosses_btq = -logprobs_btq
-        return loglosses_btq
-
     def loss_std(cx, XY_bt):
         X_bt, Y_bt = XY_bt[..., :-1], XY_bt[..., 1:]
         BT = np.prod(X_bt.shape)
-        logprobs_btq = model(cx, X_bt)
+        logits_btq = model(cx, X_bt)
+        logprobs_btq = F.log_softmax(logits_btq)
         loglosses_bt = - logprobs_btq.reshape((BT, -1))[jnp.arange(BT), Y_bt.reshape((-1,))]
         return loglosses_bt.mean()
 
-    def loss(cx, XY_bt):
-        X_bt, Y_bt = XY_bt[..., :-1], XY_bt[..., 1:]
-        BT = np.prod(X_bt.shape)
-        logprobs_btq = model(cx, X_bt)
+    def sparse_softmax_cross_entropy_with_logits(logits_btq, labels_bt):
+        BT = np.prod(np.shape(labels_bt))
+        logprobs_btq = F.log_softmax(logits_btq)
         loglosses_btq = -logprobs_btq
-        Y_bt_ = Y_bt.reshape((-1,))
+        labels_bt_ = labels_bt.reshape((-1,))
         loglosses_bt_q = loglosses_btq.reshape((BT, -1))
-        loglosses_bt_ = loglosses_bt_q[jnp.arange(BT), Y_bt_]
+        loglosses_bt_ = loglosses_bt_q[jnp.arange(BT), labels_bt_]
+        return loglosses_bt_
+
+    def loss(cx, XY_bt, **kws):
+        X_bt, Y_bt = XY_bt[..., :-1], XY_bt[..., 1:]
+        logits_btq = model(cx, X_bt, **kws)
+        loglosses_bt_ = sparse_softmax_cross_entropy_with_logits(logits_btq, Y_bt)
         return loglosses_bt_.mean()
 
     def loss2(params, XY_bt):
