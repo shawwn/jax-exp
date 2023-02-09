@@ -390,7 +390,7 @@ def rmsprop_momentum(step_size, gamma=0.9, eps=1e-8, momentum=0.9):
 
 
 @optimizer
-def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
+def adam_std(step_size, b1=0.9, b2=0.999, eps=1e-8):
     """Construct optimizer triple for Adam.
 
     Args:
@@ -424,6 +424,299 @@ def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
         return x
     return init, update, get_params
 
+
+def lerp(a, b, t):
+  return (b - a) * t + a
+
+def bias(i, x, beta):
+  return 1 - jnp.asarray(beta, x.dtype) ** (i + 1)
+
+@optimizer
+def adam(step_size, b1=0.9, b2=0.999, eps=1e-8):
+  """Construct optimizer triple for Adam.
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to a positive scalar.
+    b1: optional, a positive scalar value for beta_1, the exponential decay rate
+      for the first moment estimates (default 0.9).
+    b2: optional, a positive scalar value for beta_2, the exponential decay rate
+      for the second moment estimates (default 0.999).
+    eps: optional, a positive scalar value for epsilon, a small constant for
+      numerical stability (default 1e-8).
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+
+  def init(x0):
+    m0 = jnp.zeros_like(x0)
+    M0 = jnp.zeros_like(x0)
+    return x0, m0, M0
+
+  def update(i, g, state):
+    x, m, M = state
+    G = jnp.square(g)
+
+    # Calculate acceleration.
+    m = lerp(g, m, b1) # First moment estimate.
+    M = lerp(G, M, b2) # Second moment estimate.
+    m_ = m / bias(i, m, b1)
+    M_ = M / bias(i, M, b2)
+
+    # m_ is velocity (a vector)
+    # M_ is squared speed (a directionless quantity)
+    # sqrt(M_) is average speed over time
+    velocity = m_
+    speed = jnp.sqrt(M_)
+
+    # Divide velocity by speed to get a normalized direction.
+    normal = velocity / (speed + eps)
+
+    # Push the weights in the direction of the (normalized) gradient.
+    scale = -step_size(i)
+    offset = normal * scale
+    x = x + offset
+
+    # Return the new state.
+    return x, m, M
+
+  def get_params(state):
+    x, _, _ = state
+    return x
+  return init, update, get_params
+
+
+@optimizer
+def adamsp(step_size, b1=0.9, b2=0.999, eps=1e-8):
+  """Construct optimizer triple for Adam.
+  Args:
+    step_size: positive scalar, or a callable representing a step size schedule
+      that maps the iteration index to a positive scalar.
+    b1: optional, a positive scalar value for beta_1, the exponential decay rate
+      for the first moment estimates (default 0.9).
+    b2: optional, a positive scalar value for beta_2, the exponential decay rate
+      for the second moment estimates (default 0.999).
+    eps: optional, a positive scalar value for epsilon, a small constant for
+      numerical stability (default 1e-8).
+  Returns:
+    An (init_fun, update_fun, get_params) triple.
+  """
+  step_size = make_schedule(step_size)
+
+  def init(x0):
+    m0 = jnp.zeros_like(x0)
+    M0 = jnp.zeros_like(x0)
+    return x0, m0, M0
+
+  def update(i, g, state):
+    x, m, M = state
+    G = jnp.square(g)
+
+    # Calculate acceleration.
+    m = lerp(g, m, b1) # First moment estimate.
+    M = lerp(G, M, b2) # Second moment estimate.
+
+    # m is velocity (a vector)
+    # M is squared speed (a directionless quantity)
+    # sqrt(M) is average speed over time
+    velocity = m
+    speed = jnp.sqrt(M)
+
+    # Divide velocity by speed to get a normalized direction.
+    one_over_speed = jnp.where(speed < eps, 0.0, jnp.reciprocal(speed))
+    normal = velocity * one_over_speed
+
+    # Push the weights in the direction of the (normalized) gradient.
+    scale = -step_size(i)
+    offset = normal * scale
+    x = x + offset
+
+    # Return the new state.
+    return x, m, M
+
+  def get_params(state):
+    x, m, M = state
+    return x
+  return init, update, get_params
+
+
+@optimizer
+def adamsp_v2(step_size, b1=0.9, b2=0.999, eps=1e-8):
+    """Construct optimizer triple for Adam.
+    Args:
+      step_size: positive scalar, or a callable representing a step size schedule
+        that maps the iteration index to a positive scalar.
+      b1: optional, a positive scalar value for beta_1, the exponential decay rate
+        for the first moment estimates (default 0.9).
+      b2: optional, a positive scalar value for beta_2, the exponential decay rate
+        for the second moment estimates (default 0.999).
+      eps: optional, a positive scalar value for epsilon, a small constant for
+        numerical stability (default 1e-8).
+    Returns:
+      An (init_fun, update_fun, get_params) triple.
+    """
+    step_size = make_schedule(step_size)
+
+    def init(x0):
+        m0 = jnp.zeros_like(x0)
+        M0 = jnp.zeros_like(x0)
+        return x0, m0, M0
+
+    def update(i, g, state):
+        x, m, M = state
+        G = jnp.square(g)
+
+        # Calculate acceleration.
+        m = lerp(g, m, b1) # First moment estimate.
+        M = lerp(G, M, b2) # Second moment estimate.
+
+        # m is velocity (a vector)
+        # M is squared speed (a directionless quantity)
+        # sqrt(M) is average speed over time
+        velocity = m
+        speed = jnp.sqrt(M)
+
+        # Divide velocity by speed to get a normalized direction.
+        normal = jnp.where(speed < eps, 0.0, velocity / speed)
+
+        # Push the weights in the direction of the (normalized) gradient.
+        scale = -step_size(i)
+        offset = normal * scale
+        x = x + offset
+
+        # Return the new state.
+        return x, m, M
+
+    def get_params(state):
+        x, m, M = state
+        return x
+    return init, update, get_params
+
+
+@optimizer
+def adamsp_volavg(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
+    """Construct optimizer triple for Adam.
+    Args:
+      step_size: positive scalar, or a callable representing a step size schedule
+        that maps the iteration index to a positive scalar.
+      b1: optional, a positive scalar value for beta_1, the exponential decay rate
+        for the first moment estimates (default 0.9).
+      b2: optional, a positive scalar value for beta_2, the exponential decay rate
+        for the second moment estimates (default 0.999).
+      eps: optional, a positive scalar value for epsilon, a small constant for
+        numerical stability (default 1e-8).
+    Returns:
+      An (init_fun, update_fun, get_params) triple.
+    """
+    step_size = make_schedule(step_size)
+
+    def init(x0):
+        m0 = jnp.zeros_like(x0, shape=(N,) + x0.shape)
+        M0 = jnp.zeros_like(x0, shape=(N,) + x0.shape)
+        return x0, m0, M0
+
+    def update(i, g, state):
+        x, m, M = state
+        G = jnp.square(g)
+
+        # Calculate acceleration.
+        # m = lerp(g, m, b1) # First moment estimate.
+        # M = lerp(G, M, b2) # Second moment estimate.
+        # m = m.at[1:].set(m[:-1])
+        # M = M.at[1:].set(M[:-1])
+        m = m.at[i % N].set(g)
+        M = M.at[i % N].set(jnp.sqrt(G))
+        # m_ = m.mean(0)
+        # M_ = M.mean(0)
+        # m_ = jnp.dot(m, M)
+        # m_ = (m * M).sum(0)
+        m_ = (m * M).mean(0)
+        # M_ = M.sum(0)
+        M_ = M.mean(0)
+
+        # m_ is velocity (a vector)
+        # M_ is squared speed (a directionless quantity)
+        # sqrt(M) is average speed over time
+        velocity = m_
+        # speed = jnp.sqrt(M_)
+        speed = M_
+
+        # Divide velocity by speed to get a normalized direction.
+        normal = jnp.where(speed < eps, 0.0, velocity / speed)
+
+        # Push the weights in the direction of the (normalized) gradient.
+        scale = -step_size(i)
+        offset = normal * scale
+        x = x + offset
+
+        # Return the new state.
+        return x, m, M
+
+    def get_params(state):
+        x, m, M = state
+        return x
+    return init, update, get_params
+
+
+@optimizer
+def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
+    """Construct optimizer triple for Adam.
+    Args:
+      step_size: positive scalar, or a callable representing a step size schedule
+        that maps the iteration index to a positive scalar.
+      b1: optional, a positive scalar value for beta_1, the exponential decay rate
+        for the first moment estimates (default 0.9).
+      b2: optional, a positive scalar value for beta_2, the exponential decay rate
+        for the second moment estimates (default 0.999).
+      eps: optional, a positive scalar value for epsilon, a small constant for
+        numerical stability (default 1e-8).
+    Returns:
+      An (init_fun, update_fun, get_params) triple.
+    """
+    step_size = make_schedule(step_size)
+
+    def init(x0):
+        m0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
+        M0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
+        return x0, m0, M0
+
+    def update(i, g, state):
+        x, m, M = state
+        # G = jnp.square(g)
+        # G = jnp.abs(g)
+
+        # Calculate acceleration.
+        m = lerp(g, m, b1) # First moment estimate.
+        # M = lerp(G, M, b2) # Second moment estimate.
+
+        # m is velocity (a vector)
+        # M is squared speed (a directionless quantity)
+        # sqrt(M) is average speed over time
+        velocity = m
+        # speed = jnp.sqrt(M)
+        # speed = M_
+        # velocity = g
+        # speed = 1
+        speed = jnp.abs(g)
+
+        # Divide velocity by speed to get a normalized direction.
+        # normal = jnp.where(speed < eps, 0.0, velocity / speed)
+        # normal = jnp.where(speed < eps, 0.0, velocity / speed)
+        speed = jnp.where(speed < eps, 0.0, speed)
+        normal = speed * jnp.sign(velocity)
+
+        # Push the weights in the direction of the (normalized) gradient.
+        scale = -step_size(i)
+        offset = normal * scale
+        x = x + offset
+
+        # Return the new state.
+        return x, m, M
+
+    def get_params(state):
+        x, m, M = state
+        return x
+    return init, update, get_params
 
 @optimizer
 def adamax(step_size, b1=0.9, b2=0.999, eps=1e-8):
