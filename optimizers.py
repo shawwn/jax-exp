@@ -659,17 +659,13 @@ def adamsp_volavg(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
 
 
 @optimizer
-def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
+def adamsp_1bit(step_size, b1=0.9):
     """Construct optimizer triple for Adam.
     Args:
       step_size: positive scalar, or a callable representing a step size schedule
         that maps the iteration index to a positive scalar.
       b1: optional, a positive scalar value for beta_1, the exponential decay rate
         for the first moment estimates (default 0.9).
-      b2: optional, a positive scalar value for beta_2, the exponential decay rate
-        for the second moment estimates (default 0.999).
-      eps: optional, a positive scalar value for epsilon, a small constant for
-        numerical stability (default 1e-8).
     Returns:
       An (init_fun, update_fun, get_params) triple.
     """
@@ -678,47 +674,33 @@ def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
     def init(x0):
         # m0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
         m0 = jnp.zeros_like(x0)
-        # M0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
-        M0 = None
-        return x0, m0, M0
+        return x0, m0
 
     def update(i, g, state):
-        x, m, M = state
-        # G = jnp.square(g)
-        # G = jnp.abs(g)
+        x, m = state
 
-        # Calculate acceleration.
+        # Apply acceleration to velocity.
         m = lerp(g, m, b1) # First moment estimate.
-        # M = lerp(G, M, b2) # Second moment estimate.
 
         # m is velocity (a vector)
-        # M is squared speed (a directionless quantity)
-        # sqrt(M) is average speed over time
         velocity = m
-        # velocity = velocity.astype(g.dtype)
-        # speed = jnp.sqrt(M)
-        # speed = M_
-        # velocity = g
-        # speed = 1
+
+        # Take the sign of velocity to get a normalized direction.
+        normal = jnp.sign(velocity)
+
+        # Use the magnitude of the gradient as the speed.
         speed = jnp.abs(g)
 
-        # Divide velocity by speed to get a normalized direction.
-        # normal = jnp.where(speed < eps, 0.0, velocity / speed)
-        # normal = jnp.where(speed < eps, 0.0, velocity / speed)
-        speed = jnp.where(speed < eps, 0.0, speed)
-        # speed = speed.astype(g.dtype)
-        normal = speed * jnp.sign(velocity)
-
-        # Push the weights in the direction of the (normalized) gradient.
-        scale = -step_size(i)
+        # Push the weights in the direction of the (normalized) gradient, scaled by speed.
+        scale = -step_size(i) * speed
         offset = normal * scale
         x = x + offset
 
         # Return the new state.
-        return x, m, M
+        return x, m
 
     def get_params(state):
-        x, m, M = state
+        x, m = state
         return x
     return init, update, get_params
 
