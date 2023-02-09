@@ -677,7 +677,8 @@ def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
 
     def init(x0):
         m0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
-        M0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
+        # M0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
+        M0 = None
         return x0, m0, M0
 
     def update(i, g, state):
@@ -703,6 +704,7 @@ def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
         # normal = jnp.where(speed < eps, 0.0, velocity / speed)
         # normal = jnp.where(speed < eps, 0.0, velocity / speed)
         speed = jnp.where(speed < eps, 0.0, speed)
+        speed = speed.astype(g.dtype)
         normal = speed * jnp.sign(velocity)
 
         # Push the weights in the direction of the (normalized) gradient.
