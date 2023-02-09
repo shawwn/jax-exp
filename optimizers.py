@@ -705,7 +705,7 @@ def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
         # Divide velocity by speed to get a normalized direction.
         # normal = jnp.where(speed < eps, 0.0, velocity / speed)
         # normal = jnp.where(speed < eps, 0.0, velocity / speed)
-        # speed = jnp.where(speed < eps, 0.0, speed)
+        speed = jnp.where(speed < eps, 0.0, speed)
         # speed = speed.astype(g.dtype)
         normal = speed * jnp.sign(velocity)
 
