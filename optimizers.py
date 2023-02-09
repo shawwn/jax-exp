@@ -695,7 +695,7 @@ def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
         # M is squared speed (a directionless quantity)
         # sqrt(M) is average speed over time
         velocity = m
-        velocity = velocity.astype(g.dtype)
+        # velocity = velocity.astype(g.dtype)
         # speed = jnp.sqrt(M)
         # speed = M_
         # velocity = g
