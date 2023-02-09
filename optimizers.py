@@ -676,7 +676,8 @@ def adamsp_1bit(step_size, b1=0.9, b2=0.999, eps=1e-8, N=1):
     step_size = make_schedule(step_size)
 
     def init(x0):
-        m0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
+        # m0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
+        m0 = jnp.zeros_like(x0)
         # M0 = jnp.zeros_like(x0, shape=() + x0.shape, dtype=jnp.float32)
         M0 = None
         return x0, m0, M0
