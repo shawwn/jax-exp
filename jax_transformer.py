@@ -119,12 +119,13 @@ def slow_attn(Q_bhtr, K_bhrt, V_bhtr):
     A_bhtr = jnp.matmul(W_bhtt, V_bhtr)
     return A_bhtr
 
-try:
-    from fused_attention import fused_attention as _attn
-    print("Using flash attention")
-except ImportError:
-    print("Using slow attention")
-    _attn = slow_attn
+# try:
+#     from fused_attention import fused_attention as _attn
+#     print("Using flash attention")
+# except ImportError:
+#     print("Using slow attention")
+#     _attn = slow_attn
+_attn = slow_attn
 
 def dense(cx, X_btk, F):
     *BT, K = X_btk.shape
