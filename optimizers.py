@@ -180,7 +180,7 @@ Callable[[State], Params]]]) -> Callable[..., Optimizer]:
         @functools.wraps(init)
         def tree_init(x0_tree):
             x0_flat, tree = tree_flatten(x0_tree)
-            initial_states = [init(x0) for x0 in x0_flat]
+            initial_states = [init(x0) if x0 is not None else x0 for x0 in x0_flat]
             states_flat, subtrees = unzip2(map(tree_flatten, initial_states))
             return OptimizerState(states_flat, tree, subtrees)
 
@@ -194,7 +194,7 @@ Callable[[State], Params]]]) -> Callable[..., Optimizer]:
                        "initialized: parameter tree {} and grad tree {}.")
                 raise TypeError(msg.format(tree, tree2))
             states = map(tree_unflatten, subtrees, states_flat)
-            new_states = map(partial(update, i), grad_flat, states)
+            new_states = [update(i, g, state) if g is not None and state is not None else state for g, state in zip(grad_flat, states)]
             new_states_flat, subtrees2 = unzip2(map(tree_flatten, new_states))
             for subtree, subtree2 in zip(subtrees, subtrees2):
                 if subtree2 != subtree:
