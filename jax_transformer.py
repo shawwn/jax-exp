@@ -114,7 +114,7 @@ def norm(cx, x, axis=-1):
 
 def mask_attn_weights(w):
     n = w.shape[-1]
-    b = jnp.tril(jnp.ones((n, n)))
+    b = jnp.tril(jnp.ones_like(w, shape=(n, n), dtype=w.dtype))
     # b = jnp.reshape(b, (1, 1, n, n))
     while len(b.shape) < len(w.shape):
         b = b[None, ...]
