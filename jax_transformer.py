@@ -34,6 +34,9 @@ class VariableContext(object):
     def scope(self, name):
         return VariableContext(self.name2val, self._join(self.prefix, name), self.allow_new)
 
+    def has_variable(self, name):
+        return self._join(self.prefix, name) in self.name2val
+
     def get_variable(self, name, initializer):
         return self.get_variable_absolute(
             name=self._join(self.prefix, name), 
@@ -49,14 +52,21 @@ class VariableContext(object):
         return self.name2val[name]
 
     def _join(self, *xs):
-        return '/'.join(xs)
+        import posixpath
+        return posixpath.join(*xs)
+
+    def variables_names(self):
+        return list(self.name2val.keys())
+
+    def variable_index(self, name):
+        return self.variables_names().index(self._join(self.prefix, name))
 
     def variables_list(self):
         return list(self.name2val.values())
 
     def replace_with_list(self, newlist):
         assert len(newlist) == len(self.name2val)
-        name2val = {k : v for (k, v) in zip(self.name2val.keys(), newlist)}
+        name2val = {k: (v if v is not None else jnp.asarray(self.name2val[k])) for (k, v) in zip(self.name2val.keys(), newlist)}
         return VariableContext(name2val, self.prefix, self.allow_new)
 
     def transform(self, func):
