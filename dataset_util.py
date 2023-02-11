@@ -85,7 +85,7 @@ def reshape_seqs(X, seq_size):
     return X[:n].reshape((-1, seq_size))
 
 
-def train_test_split(codebook, text, n_ctx, train_percentage=0.75):
+def train_test_split(codebook, text, n_ctx, train_percentage=0.95):
     if hasattr(text, 'shape'):
         X_bt = reshape_seqs(text, n_ctx + 1)
         train_end = int(len(X_bt) * train_percentage)
