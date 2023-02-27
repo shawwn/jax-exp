@@ -7,7 +7,6 @@ from __future__ import annotations
 from jax.example_libraries import optimizers
 import jax._src.nn.functions as F
 import dataset_util
-import functools
 import jax.numpy as jnp
 import numpy as np
 import numpy.random as npr
@@ -50,14 +49,14 @@ class Config(argparse.Namespace):
         parser.add_argument('--n_layer', type=int, default=4)
         parser.add_argument('--n_embd', type=int, default=128)
         parser.add_argument('--fps', type=int, default=5, help="The number of times per second that the status bar shows loss values, etc")
-        return cast(Config, parser.parse_args())
+        return cast(cls, parser.parse_args())
 
 # ================================================================
 # Tf-like framework for Jax
 # ================================================================
 
-def create_root_context(cfg: Config):
-    return VariableContext(cfg, {}, '', allow_new=True)
+def create_root_context(cfg: Config, prefix: str):
+    return VariableContext(cfg, {}, prefix, allow_new=True)
 
 @jax.tree_util.register_pytree_node_class
 class VariableContext:
@@ -232,7 +231,7 @@ def main():
     npr.seed(cfg.seed)
     text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file := np.random.choice(cfg.text_files), cfg.n_ctx)
     cfg.n_vocab = codebook.size
-    root_cx = create_root_context(cfg)
+    root_cx = create_root_context(cfg, 'model')
 
     def train_example_count():
         return Xtr_bt.shape[0]
