@@ -22,6 +22,7 @@ import tqdm
 def create_root_context():
     return VariableContext({}, '')
 
+@jax.tree_util.register_pytree_node_class
 class VariableContext:
     def __init__(self, name2val, prefix, allow_new=True):
         self.name2val = name2val
@@ -29,8 +30,7 @@ class VariableContext:
         self.allow_new = allow_new
 
     def scope(self, name):
-        return VariableContext(self.name2val, 
-            self._join(self.prefix, name), self.allow_new)
+        return VariableContext(self.name2val, self._join(self.prefix, name), self.allow_new)
 
     def get_variable(self, name, initializer):
         return self.get_variable_absolute(
@@ -56,6 +56,19 @@ class VariableContext:
         assert len(newlist) == len(self.name2val)
         name2val = {k : v for (k, v) in zip(self.name2val.keys(), newlist)}
         return VariableContext(name2val, self.prefix, self.allow_new)
+
+    def tree_flatten(self):
+        return self.variables_list(), self
+
+    @classmethod
+    def tree_unflatten(cls, parent: VariableContext, values):
+        if not parent.allow_new:
+            return parent.replace_with_list(values)
+        return parent
+
+    def __repr__(self):
+        return (f'VariableContext(len(name2val)={len(self.name2val)}, '
+                f'prefix={self.prefix!r}, allow_new={self.allow_new})')
 
 def print_variables(cx: VariableContext):
     for (name, val) in sorted(cx.name2val.items()):
@@ -209,9 +222,6 @@ def main():
         loglosses_bt = - logprobs_btq.reshape((B*T, -1))[
             jnp.arange(B * T), Y_bt.reshape((-1,))]
         return loglosses_bt.mean()
-    def loss2(params, XY_bt):
-        cx = root_cx.replace_with_list(params)
-        return loss(cx, XY_bt)
 
     loss(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
     root_cx.allow_new = False
@@ -231,8 +241,10 @@ def main():
     def update(i, opt_state, batch):
         XY, = batch
         params = get_params(opt_state)
-        v, g = jax.value_and_grad(loss2)(params, XY)
-        return v, opt_update(i, g, opt_state)
+        cx = root_cx.replace_with_list(params)
+        loss_v, cx_grad = jax.value_and_grad(loss)(cx, XY)
+        g = cx_grad.variables_list()
+        return loss_v, opt_update(i, g, opt_state)
 
     bars = {}
 
