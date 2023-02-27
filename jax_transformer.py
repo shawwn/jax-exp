@@ -169,8 +169,9 @@ def transformer(cx: VariableContext, tok_bt, *, n_vocab, n_head, n_layer, n_ctx,
     assert isinstance(tok_bt, jnp.ndarray)
     posemb_bte = posembs_pe[pos_bt]
     last_bts = tokenemb_bte + posemb_bte
+    block_fn = jax.checkpoint(functools.partial(block, n_head=n_head))
     for layer in range(n_layer):
-        last_bts = block(cx.scope(f'h{layer:02d}'), last_bts, n_head=n_head)
+        last_bts = block_fn(cx.scope(f'h{layer}'), last_bts)
     logits_btq = jnp.matmul(last_bts, tokenembs_qe.T)
     logprobs_btq = F.log_softmax(logits_btq)
     return logprobs_btq
