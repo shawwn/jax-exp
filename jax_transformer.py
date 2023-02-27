@@ -241,14 +241,18 @@ def sparse_softmax_cross_entropy_with_logits(logits_btq, labels_bt):
     labels_bt_ = labels_bt.reshape((-1,))
     loglosses_bt_q = loglosses_btq.reshape((BT, -1))
     loglosses_bt_ = loglosses_bt_q[jnp.arange(BT), labels_bt_]
-    return loglosses_bt_
+    loglosses_bt = loglosses_bt_.reshape(labels_bt.shape)
+    return loglosses_bt
+
+def logloss(cx: VariableContext, XY_bt):
+    X_bt = XY_bt[..., :-1]
+    Y_bt = XY_bt[..., 1:]
+    logits_btq = transformer(cx, X_bt)
+    loglosses_bt = sparse_softmax_cross_entropy_with_logits(logits_btq, Y_bt)
+    return loglosses_bt
 
 def loss(cx: VariableContext, XY_bt):
-    X_bt = XY_bt[:, :-1]
-    Y_bt = XY_bt[:, 1:]
-    logits_btq = transformer(cx, X_bt)
-    loglosses_bt_ = sparse_softmax_cross_entropy_with_logits(logits_btq, Y_bt)
-    return loglosses_bt_.mean()
+    return logloss(cx, XY_bt).mean()
 
 def main():
     cfg = Config.parse_args()
