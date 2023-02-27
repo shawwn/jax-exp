@@ -207,16 +207,23 @@ def transformer(cx: VariableContext, tok_bt):
         H_bts = block_fn(cx.scope(f'h{layer}'), H_bts)
     H_bts = norm(cx.scope('ln_f'), H_bts)
     logits_btq = jnp.matmul(H_bts, tokenembs_qe.T)
+    return logits_btq
+
+def sparse_softmax_cross_entropy_with_logits(logits_btq, labels_bt):
+    BT = np.prod(np.shape(labels_bt))
     logprobs_btq = F.log_softmax(logits_btq)
-    return logprobs_btq
+    loglosses_btq = -logprobs_btq
+    labels_bt_ = labels_bt.reshape((-1,))
+    loglosses_bt_q = loglosses_btq.reshape((BT, -1))
+    loglosses_bt_ = loglosses_bt_q[jnp.arange(BT), labels_bt_]
+    return loglosses_bt_
 
 def loss(cx: VariableContext, XY_bt):
     X_bt = XY_bt[:, :-1]
-    B, T = X_bt.shape
     Y_bt = XY_bt[:, 1:]
-    logprobs_btq = transformer(cx, X_bt)
-    loglosses_bt = -logprobs_btq.reshape((B*T, -1))[jnp.arange(B * T), Y_bt.reshape((-1,))]
-    return loglosses_bt.mean()
+    logits_btq = transformer(cx, X_bt)
+    loglosses_bt_ = sparse_softmax_cross_entropy_with_logits(logits_btq, Y_bt)
+    return loglosses_bt_.mean()
 
 def main():
     cfg = Config.parse_args()
