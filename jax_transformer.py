@@ -3,6 +3,7 @@ Jax implementation of transformer language model loosely based on
 https://github.com/openai/finetune-transformer-lm/
 character-based model with simplifications
 """
+from __future__ import annotations
 from jax.example_libraries import optimizers
 import jax._src.nn.functions as F
 import dataset_util
@@ -10,7 +11,6 @@ import functools
 import jax.numpy as jnp
 import numpy as np
 import numpy.random as npr
-import re
 import jax
 import time
 import tqdm
@@ -22,7 +22,7 @@ import tqdm
 def create_root_context():
     return VariableContext({}, '')
 
-class VariableContext(object):
+class VariableContext:
     def __init__(self, name2val, prefix, allow_new=True):
         self.name2val = name2val
         self.prefix = prefix
@@ -57,7 +57,7 @@ class VariableContext(object):
         name2val = {k : v for (k, v) in zip(self.name2val.keys(), newlist)}
         return VariableContext(name2val, self.prefix, self.allow_new)
 
-def print_variables(cx):
+def print_variables(cx: VariableContext):
     for (name, val) in sorted(cx.name2val.items()):
         print(f'{name:20s} {str(val.shape):20s} {str(val.dtype):20s}')
 
@@ -86,7 +86,7 @@ def _norm(x, *, axis, g=None, b=None, e=1e-5):
         x = x * g + b
     return x
 
-def norm(cx, x, axis=-1):
+def norm(cx: VariableContext, x, axis=-1):
     n_state = x.shape[axis]
     g = cx.get_variable("g", initializer=lambda : np.ones(n_state, 'f'))
     b = cx.get_variable("b", initializer=lambda : np.zeros(n_state, 'f'))
@@ -107,7 +107,7 @@ def _attn(Q_bhtr, K_bhrt, V_bhtr):
     A_bhtr = jnp.matmul(W_bhtt, V_bhtr)
     return A_bhtr
 
-def dense(cx, X_btk, F):
+def dense(cx: VariableContext, X_btk, F):
     B, T, K = X_btk.shape
     X_bt_k = jnp.reshape(X_btk, (-1, K))
     W_kf = cx.get_variable("w", initializer=lambda : normc(K, F))
@@ -115,7 +115,7 @@ def dense(cx, X_btk, F):
     Y_bt_f = jnp.matmul(X_bt_k, W_kf) + b_f
     return jnp.reshape(Y_bt_f, (B, T, F))
 
-def attn(cx, X_btk, n_state, n_head):
+def attn(cx: VariableContext, X_btk, n_state, n_head):
     B, T, _K = X_btk.shape
     assert n_state % n_head==0
     QKV_b_t_3s = dense(cx.scope('c_attn'), X_btk, n_state * 3)
@@ -130,13 +130,13 @@ def attn(cx, X_btk, n_state, n_head):
     P_bts = dense(cx.scope('c_proj'), A_bts, n_state)
     return P_bts
 
-def mlp(cx, X_bts, *, n_hid):
+def mlp(cx: VariableContext, X_bts, *, n_hid):
     S = X_bts.shape[-1]
     H_bth = F.relu(dense(cx.scope('c_fc'), X_bts, n_hid))
     Y_bts = dense(cx.scope('c_proj'), H_bth, S)
     return Y_bts
 
-def block(cx, X_bts, *, n_head):
+def block(cx: VariableContext, X_bts, *, n_head):
     _B, _T, S = X_bts.shape
     A_bts = attn(cx.scope('attn'), X_bts, S, n_head)
     N_bts = norm(cx.scope('ln_1'), X_bts + A_bts, axis=-1)
@@ -144,7 +144,7 @@ def block(cx, X_bts, *, n_head):
     Y_bts = norm(cx.scope('ln_2'), N_bts + M_bts, axis=-1)
     return Y_bts
 
-def transformer(cx, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
+def transformer(cx: VariableContext, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
     tok_bt = jnp.asarray(tok_bt)
     B, T = tok_bt.shape
     pos_bt = jax.lax.broadcasted_iota(jnp.int32, (B, T), 1)
@@ -201,7 +201,7 @@ def main():
     def train_token_count():
         return np.prod(Xtr_bt.shape)
 
-    def loss(cx, XY_bt):
+    def loss(cx: VariableContext, XY_bt):
         X_bt = XY_bt[:, :-1]
         B, T = X_bt.shape
         Y_bt = XY_bt[:, 1:]
