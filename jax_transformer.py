@@ -149,13 +149,11 @@ def mlp(cx: VariableContext, X_bts, *, n_hid):
     Y_bts = dense(cx.scope('c_proj'), H_bth, S)
     return Y_bts
 
-def block(cx: VariableContext, X_bts, *, n_head):
-    _B, _T, S = X_bts.shape
-    A_bts = attn(cx.scope('attn'), X_bts, S, n_head)
-    N_bts = norm(cx.scope('ln_1'), X_bts + A_bts, axis=-1)
-    M_bts = mlp(cx.scope('mlp'), N_bts, n_hid=S * 4)
-    Y_bts = norm(cx.scope('ln_2'), N_bts + M_bts, axis=-1)
-    return Y_bts
+def block(cx, X_bts, *, n_head):
+    *_BT, S = X_bts.shape
+    X_bts = X_bts + attn(cx.scope('attn'), norm(cx.scope('ln_1'), X_bts), S, n_head)
+    X_bts = X_bts + mlp(cx.scope('mlp'), norm(cx.scope('ln_2'), X_bts), n_hid=S * 4)
+    return X_bts
 
 def transformer(cx: VariableContext, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
     tok_bt = jnp.asarray(tok_bt)
