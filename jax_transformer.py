@@ -4,7 +4,8 @@ https://github.com/openai/finetune-transformer-lm/
 character-based model with simplifications
 """
 from __future__ import annotations
-from jax.example_libraries import optimizers
+#from jax.example_libraries import optimizers
+import optimizers
 import jax._src.nn.functions as F
 import dataset_util
 import jax.numpy as jnp
