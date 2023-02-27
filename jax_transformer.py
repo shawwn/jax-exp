@@ -44,7 +44,7 @@ class VariableContext:
             assert type(val) == np.ndarray and val.dtype == np.float32
             self.name2val[name] = val
 
-        return self.name2val[name]
+        return jnp.asarray(self.name2val[name])
 
     def _join(self, *xs):
         return '/'.join(xs)
@@ -223,7 +223,7 @@ def main():
             jnp.arange(B * T), Y_bt.reshape((-1,))]
         return loglosses_bt.mean()
 
-    loss(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
+    jax.jit(loss).lower(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
     root_cx.allow_new = False
     print_variables(root_cx)
     init_params = root_cx.variables_list()
