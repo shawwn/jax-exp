@@ -126,9 +126,6 @@ def normc(*shape):
 def randn(shape, stddev):
     return npr.randn(*shape).astype(jnp.float32) * stddev
 
-def gelu(x):
-    return 0.5*x*(1 + jnp.tanh(0.79788 * (x + 0.044715 * x ** 3)))
-
 def _norm(x, *, axis, g=None, b=None, e=1e-5):
     u = jnp.mean(x, axis=axis, keepdims=True)
     s = jnp.mean(jnp.square(x - u), axis=axis, keepdims=True)
@@ -194,9 +191,10 @@ def attn(cx: VariableContext, X_bts, n_state, n_head):
 
 def mlp(cx: VariableContext, X_bts, *, n_hid):
     S = X_bts.shape[-1]
-    H_bth = F.relu(dense(cx.scope('c_fc'), X_bts, n_hid))
-    Y_bts = dense(cx.scope('c_proj'), H_bth, S)
-    return Y_bts
+    H_bth = dense(cx.scope('c_fc'), X_bts, n_hid)
+    H_bth = F.gelu(H_bth)
+    X_bts = dense(cx.scope('c_proj'), H_bth, S)
+    return X_bts
 
 def block(cx: VariableContext, X_bts):
     *_BT, S = X_bts.shape
