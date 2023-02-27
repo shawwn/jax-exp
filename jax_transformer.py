@@ -14,23 +14,61 @@ import numpy.random as npr
 import jax
 import time
 import tqdm
+import argparse
+from typing import cast
+
+class Config(argparse.Namespace):
+    seed: int
+    lr: float
+    adam_eps: float
+    adam_b1: float
+    adam_b2: float
+    batch_size: int
+    desc: str
+    n_vocab: int
+    n_ctx: int
+    n_head: int
+    n_layer: int
+    n_embd: int
+    fps: int
+
+    @classmethod
+    def parse_args(cls):
+        parser = argparse.ArgumentParser()
+        parser.add_argument('text_files', nargs='+')
+        parser.add_argument('--load_model', default=False)
+        parser.add_argument('--seed', type=int, default=-1)
+        parser.add_argument('--lr', type=float, default=1e-4)
+        parser.add_argument('--adam_eps', type=float, default=1e-8, help="Adam's epsilon parameter")
+        parser.add_argument('--adam_b1', type=float, default=0.9, help="Adam's beta1 parameter")
+        parser.add_argument('--adam_b2', type=float, default=0.999, help="Adam's beta2 parameter")
+        parser.add_argument('-b', '--batch_size', type=int, default=64)
+        parser.add_argument('-d', '--desc', '--description', type=str, default="")
+        parser.add_argument('--n_vocab', type=int, default=dataset_util.make_codebook_gpt2().size)
+        parser.add_argument('--n_ctx', type=int, default=64)
+        parser.add_argument('--n_head', type=int, default=4)
+        parser.add_argument('--n_layer', type=int, default=4)
+        parser.add_argument('--n_embd', type=int, default=128)
+        parser.add_argument('--fps', type=int, default=5, help="The number of times per second that the status bar shows loss values, etc")
+        return cast(Config, parser.parse_args())
 
 # ================================================================
 # Tf-like framework for Jax
 # ================================================================
 
-def create_root_context():
-    return VariableContext({}, '')
+def create_root_context(cfg: Config):
+    return VariableContext(cfg, {}, '', allow_new=True)
 
 @jax.tree_util.register_pytree_node_class
 class VariableContext:
-    def __init__(self, name2val, prefix, allow_new=True):
+    def __init__(self, cfg: Config, name2val, prefix, allow_new):
+        self.cfg = cfg
         self.name2val = name2val
         self.prefix = prefix
         self.allow_new = allow_new
 
     def scope(self, name):
-        return VariableContext(self.name2val, self._join(self.prefix, name), self.allow_new)
+        return VariableContext(self.cfg, self.name2val, self._join(self.prefix, name), self.allow_new)
 
     def get_variable(self, name, initializer):
         return self.get_variable_absolute(
@@ -43,7 +81,6 @@ class VariableContext:
             val = initializer()
             assert type(val) == np.ndarray and val.dtype == np.float32
             self.name2val[name] = val
-
         return jnp.asarray(self.name2val[name])
 
     def _join(self, *xs):
@@ -55,7 +92,7 @@ class VariableContext:
     def replace_with_list(self, newlist):
         assert len(newlist) == len(self.name2val)
         name2val = {k : v for (k, v) in zip(self.name2val.keys(), newlist)}
-        return VariableContext(name2val, self.prefix, self.allow_new)
+        return VariableContext(self.cfg, name2val, self.prefix, self.allow_new)
 
     def tree_flatten(self):
         return self.variables_list(), self
@@ -101,8 +138,8 @@ def _norm(x, *, axis, g=None, b=None, e=1e-5):
 
 def norm(cx: VariableContext, x, axis=-1):
     n_state = x.shape[axis]
-    g = cx.get_variable("g", initializer=lambda : np.ones(n_state, 'f'))
-    b = cx.get_variable("b", initializer=lambda : np.zeros(n_state, 'f'))
+    g = cx.get_variable("g", initializer=lambda: np.ones(n_state, 'f'))
+    b = cx.get_variable("b", initializer=lambda: np.zeros(n_state, 'f'))
     return _norm(x, g=g, b=b, axis=axis)
 
 def mask_attn_weights(w):
@@ -123,14 +160,14 @@ def _attn(Q_bhtr, K_bhrt, V_bhtr):
 def dense(cx: VariableContext, X_btk, F):
     B, T, K = X_btk.shape
     X_bt_k = jnp.reshape(X_btk, (-1, K))
-    W_kf = cx.get_variable("w", initializer=lambda : normc(K, F))
-    b_f = cx.get_variable("b", initializer=lambda : np.zeros(F, 'f'))
+    W_kf = cx.get_variable("w", initializer=lambda: normc(K, F))
+    b_f = cx.get_variable("b", initializer=lambda: np.zeros(F, 'f'))
     Y_bt_f = jnp.matmul(X_bt_k, W_kf) + b_f
     return jnp.reshape(Y_bt_f, (B, T, F))
 
 def attn(cx: VariableContext, X_btk, n_state, n_head):
     B, T, _K = X_btk.shape
-    assert n_state % n_head==0
+    assert n_state % n_head == 0
     QKV_b_t_3s = dense(cx.scope('c_attn'), X_btk, n_state * 3)
     QKV_b_t_3h_r = jnp.reshape(QKV_b_t_3s, (B, T, 3 * n_head, n_state // n_head))
     Q_bthr, K_bthr, V_bthr = jnp.split(QKV_b_t_3h_r, 3, axis=2)
@@ -149,64 +186,46 @@ def mlp(cx: VariableContext, X_bts, *, n_hid):
     Y_bts = dense(cx.scope('c_proj'), H_bth, S)
     return Y_bts
 
-def block(cx, X_bts, *, n_head):
+def block(cx: VariableContext, X_bts):
     *_BT, S = X_bts.shape
-    X_bts = X_bts + attn(cx.scope('attn'), norm(cx.scope('ln_1'), X_bts), S, n_head)
+    X_bts = X_bts + attn(cx.scope('attn'), norm(cx.scope('ln_1'), X_bts), S, cx.cfg.n_head)
     X_bts = X_bts + mlp(cx.scope('mlp'), norm(cx.scope('ln_2'), X_bts), n_hid=S * 4)
     return X_bts
 
-def transformer(cx: VariableContext, tok_bt, *, n_vocab, n_head, n_layer, n_ctx, n_embd):
+def transformer(cx: VariableContext, tok_bt):
     tok_bt = jnp.asarray(tok_bt)
     B, T = tok_bt.shape
     pos_bt = jax.lax.broadcasted_iota(jnp.int32, (B, T), 1)
-    tokenembs_qe = cx.get_variable('tokenembs', 
-        initializer=lambda : normc(n_vocab, n_embd) * 0.1)
-    posembs_pe = cx.get_variable('posembs', 
-        initializer=lambda : normc(n_ctx, n_embd) * 0.1)
+    tokenembs_qe = cx.get_variable('tokenembs', initializer=lambda: normc(cx.cfg.n_vocab, cx.cfg.n_embd) * 0.1)
+    posembs_pe = cx.get_variable('posembs', initializer=lambda: normc(cx.cfg.n_ctx, cx.cfg.n_embd) * 0.1)
     tokenemb_bte = tokenembs_qe[tok_bt]
     assert isinstance(tok_bt, jnp.ndarray)
     posemb_bte = posembs_pe[pos_bt]
     H_bts = tokenemb_bte + posemb_bte
-    block_fn = jax.checkpoint(functools.partial(block, n_head=n_head))
-    for layer in range(n_layer):
+    block_fn = jax.checkpoint(block)
+    for layer in range(cx.cfg.n_layer):
         H_bts = block_fn(cx.scope(f'h{layer}'), H_bts)
     H_bts = norm(cx.scope('ln_f'), H_bts)
     logits_btq = jnp.matmul(H_bts, tokenembs_qe.T)
     logprobs_btq = F.log_softmax(logits_btq)
     return logprobs_btq
 
+def loss(cx: VariableContext, XY_bt):
+    X_bt = XY_bt[:, :-1]
+    B, T = X_bt.shape
+    Y_bt = XY_bt[:, 1:]
+    logprobs_btq = transformer(cx, X_bt)
+    loglosses_bt = -logprobs_btq.reshape((B*T, -1))[jnp.arange(B * T), Y_bt.reshape((-1,))]
+    return loglosses_bt.mean()
+
 def main():
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('text_files', nargs='+')
-    parser.add_argument('--load_model', default=False)
-    parser.add_argument('--seed', type=int, default=-1)
-    parser.add_argument('--lr', type=float, default=1e-4)
-    parser.add_argument('--adam_eps', type=float, default=1e-8, help="Adam's epsilon parameter")
-    parser.add_argument('--adam_b1', type=float, default=0.9, help="Adam's beta1 parameter")
-    parser.add_argument('--adam_b2', type=float, default=0.999, help="Adam's beta2 parameter")
-    parser.add_argument('-b', '--batch_size', type=int, default=64)
-    parser.add_argument('-d', '--desc', '--description', type=str, default="")
-    parser.add_argument('--n_vocab', type=int, default=dataset_util.make_codebook_gpt2().size)
-    parser.add_argument('--n_ctx', type=int, default=64)
-    parser.add_argument('--n_head', type=int, default=4)
-    parser.add_argument('--n_layer', type=int, default=4)
-    parser.add_argument('--n_embd', type=int, default=128)
-    parser.add_argument('--fps', type=int, default=5, help="The number of times per second that the status bar shows loss values, etc")
-    args = parser.parse_args()
-    if args.seed < 0:
-        args.seed = npr.randint(2**31)
-    npr.seed(args.seed)
-    text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file := np.random.choice(args.text_files), args.n_ctx)
-    model = functools.partial(
-        transformer,
-        n_vocab=codebook.size,
-        n_ctx=args.n_ctx,
-        n_head=args.n_head,
-        n_layer=args.n_layer,
-        n_embd=args.n_embd,
-    )
-    root_cx = create_root_context()
+    cfg = Config.parse_args()
+    if cfg.seed < 0:
+        cfg.seed = npr.randint(2**31)
+    npr.seed(cfg.seed)
+    text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file := np.random.choice(cfg.text_files), cfg.n_ctx)
+    cfg.n_vocab = codebook.size
+    root_cx = create_root_context(cfg)
 
     def train_example_count():
         return Xtr_bt.shape[0]
@@ -214,27 +233,18 @@ def main():
     def train_token_count():
         return np.prod(Xtr_bt.shape)
 
-    def loss(cx: VariableContext, XY_bt):
-        X_bt = XY_bt[:, :-1]
-        B, T = X_bt.shape
-        Y_bt = XY_bt[:, 1:]
-        logprobs_btq = model(cx, X_bt)
-        loglosses_bt = - logprobs_btq.reshape((B*T, -1))[
-            jnp.arange(B * T), Y_bt.reshape((-1,))]
-        return loglosses_bt.mean()
-
-    jax.jit(loss).lower(root_cx, Xtr_bt[:args.batch_size]) # Just create variables
+    jax.jit(loss).lower(root_cx, Xtr_bt[:cfg.batch_size]) # Just create variables
     root_cx.allow_new = False
     print_variables(root_cx)
     init_params = root_cx.variables_list()
     def print_hparams():
         print('=' * 50)
-        for k, v in args.__dict__.items():
+        for k, v in cfg.__dict__.items():
             print(f'{k}: {v!r}')
         print('=' * 50)
     print_hparams()
 
-    opt_init, opt_update, get_params = optimizers.adam(step_size=args.lr, b1=args.adam_b1, b2=args.adam_b2, eps=args.adam_eps)
+    opt_init, opt_update, get_params = optimizers.adam(step_size=cfg.lr, b1=cfg.adam_b1, b2=cfg.adam_b2, eps=cfg.adam_eps)
     opt_state = opt_init(init_params)
 
     @jax.jit
@@ -250,12 +260,11 @@ def main():
 
     def make_pbar(*argv, **kws):
         make = tqdm.trange if argv else tqdm.tqdm
-        interval = 1 / args.fps
+        interval = 1 / cfg.fps
         pos = kws.pop('position', len(bars))
         bar = make(*argv,
                    position=pos,
                    dynamic_ncols=True,
-                   # ncols=0,
                    mininterval=interval,
                    maxinterval=interval,
                    leave=True,
@@ -288,17 +297,17 @@ def main():
                     )
     def hparams():
         return dict(
-            batch=f'{args.batch_size}',
-            # seed=f'{args.seed}',
-            lr=f'{args.lr:.1e}',
-            b1=args.adam_b1,
-            b2=args.adam_b2,
-            eps=args.adam_eps,
+            batch=f'{cfg.batch_size}',
+            # seed=f'{cfg.seed}',
+            lr=f'{cfg.lr:.1e}',
+            b1=cfg.adam_b1,
+            b2=cfg.adam_b2,
+            eps=cfg.adam_eps,
             n_vocab=codebook.size,
-            n_ctx=args.n_ctx,
-            n_head=args.n_head,
-            n_layer=args.n_layer,
-            n_embd=args.n_embd,
+            n_ctx=cfg.n_ctx,
+            n_head=cfg.n_head,
+            n_layer=cfg.n_layer,
+            n_embd=cfg.n_embd,
         )
     def tagline(h: dict):
         return ' '.join([f'{k}: {v}' for k, v in h.items()])
@@ -314,16 +323,16 @@ def main():
     pwrite = pstep
     while True:
         ptokens.reset(train_token_count())
-        pepoch.set_postfix(dict(desc=repr(args.desc), seed=f'{args.seed}', text_file=text_file))
-        for XY in dataset_util.iterbatches(Xtr_bt, batch_size=args.batch_size, include_final_partial_batch=False):
+        pepoch.set_postfix(dict(desc=repr(cfg.desc), seed=f'{cfg.seed}', text_file=text_file))
+        for XY in dataset_util.iterbatches(Xtr_bt, batch_size=cfg.batch_size, include_final_partial_batch=False):
             try:
                 lossval, opt_state = update(pstep.n, opt_state, XY)
                 loss_sum += lossval
                 loss_n += 1
                 pstep.set_postfix(stats(lossval), refresh=False)
                 pexamples.set_postfix(hparams(), refresh=False)
-                pexamples.update(args.batch_size)
-                ptokens.update(args.batch_size * args.n_ctx)
+                pexamples.update(cfg.batch_size)
+                ptokens.update(cfg.batch_size * cfg.n_ctx)
                 pstep.update(1)
                 def need_show(n):
                     if n <= 1_000 and n % 50 == 0:
@@ -338,14 +347,14 @@ def main():
             except KeyboardInterrupt:
                 with pwrite.external_write_mode():
                     print("")
-                    print(repr(args.desc), f'seed={args.seed}', hparams())
+                    print(repr(cfg.desc), f'seed={cfg.seed}', hparams())
                     breakpoint()
         pepoch.update(1)
         # new epoch; load a different text file.
-        text_file2 = np.random.choice(args.text_files)
+        text_file2 = np.random.choice(cfg.text_files)
         if text_file2 != text_file:
             text_file = text_file2
-            text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file, args.n_ctx)
+            text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file, cfg.n_ctx)
 
 if __name__ == '__main__':
     main()
