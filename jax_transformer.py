@@ -30,6 +30,7 @@ class Config(argparse.Namespace):
     n_layer: int
     n_embd: int
     fps: int
+    rotary: bool
 
     @classmethod
     def parse_args(cls):
@@ -49,6 +50,7 @@ class Config(argparse.Namespace):
         parser.add_argument('--n_layer', type=int, default=4)
         parser.add_argument('--n_embd', type=int, default=128)
         parser.add_argument('--fps', type=int, default=5, help="The number of times per second that the status bar shows loss values, etc")
+        parser.add_argument('--rotary', action='store_true', help="Whether to use rotary embeddings")
         return cast(cls, parser.parse_args())
 
 # ================================================================
@@ -143,8 +145,9 @@ def norm(cx: VariableContext, x, axis=-1):
 
 def mask_attn_weights(w):
     n = w.shape[-1]
-    b = jnp.tril(jnp.ones((n, n)))
-    b = jnp.reshape(b, (1, 1, n, n))
+    b = jnp.tril(jnp.ones_like(w, shape=(n, n), dtype=w.dtype))
+    while len(b.shape) < len(w.shape):
+        b = b[None, ...]
     w = w * b - 1e9 * (1 - b)
     return w
 
@@ -157,25 +160,35 @@ def _attn(Q_bhtr, K_bhrt, V_bhtr):
     return A_bhtr
 
 def dense(cx: VariableContext, X_btk, F):
-    B, T, K = X_btk.shape
+    *BT, K = X_btk.shape
     X_bt_k = jnp.reshape(X_btk, (-1, K))
     W_kf = cx.get_variable("w", initializer=lambda: normc(K, F))
     b_f = cx.get_variable("b", initializer=lambda: np.zeros(F, 'f'))
     Y_bt_f = jnp.matmul(X_bt_k, W_kf) + b_f
-    return jnp.reshape(Y_bt_f, (B, T, F))
+    return jnp.reshape(Y_bt_f, (*BT, F))
 
-def attn(cx: VariableContext, X_btk, n_state, n_head):
-    B, T, _K = X_btk.shape
+def attn_qkv(cx: VariableContext, Q_bthd, K_bthd, V_bthd):
+    Q_bhtd = jnp.swapaxes(Q_bthd, -3, -2)
+    K_bhtd = jnp.swapaxes(K_bthd, -3, -2)
+    K_bhdt = jnp.swapaxes(K_bhtd, -2, -1)
+    V_bhtd = jnp.swapaxes(V_bthd, -3, -2)
+    R = Q_bhtd.shape[-1]
+    invsqrt_keysize = jnp.array(1.0 / np.sqrt(R), dtype=Q_bhtd.dtype)
+    W_bhtt = jnp.matmul(Q_bhtd, K_bhdt) * invsqrt_keysize
+    W_bhtt = mask_attn_weights(W_bhtt)
+    W_bhtt = F.softmax(W_bhtt, axis=-1)
+    A_bhtd = jnp.matmul(W_bhtt, V_bhtd)
+    A_bthd = jnp.swapaxes(A_bhtd, -3, -2)
+    return A_bthd
+
+def attn(cx: VariableContext, X_bts, n_state, n_head):
     assert n_state % n_head == 0
-    QKV_b_t_3s = dense(cx.scope('c_attn'), X_btk, n_state * 3)
-    QKV_b_t_3h_r = jnp.reshape(QKV_b_t_3s, (B, T, 3 * n_head, n_state // n_head))
-    Q_bthr, K_bthr, V_bthr = jnp.split(QKV_b_t_3h_r, 3, axis=2)
-    Q_bhtr = jnp.transpose(Q_bthr, (0, 2, 1, 3))
-    V_bhtr = jnp.transpose(V_bthr, (0, 2, 1, 3))
-    K_bhrt = jnp.transpose(K_bthr, (0, 2, 3, 1))
-    A_bhtr = _attn(Q_bhtr, K_bhrt, V_bhtr)
-    A_bthr = jnp.transpose(A_bhtr, (0, 2, 1, 3))
-    A_bts = jnp.reshape(A_bthr, (B, T, n_state))
+    *BT, _S = X_bts.shape
+    QKV_b_t_3s = dense(cx.scope('c_attn'), X_bts, n_state * 3)
+    QKV_b_t_3h_d = jnp.reshape(QKV_b_t_3s, (*BT, 3 * n_head, n_state // n_head))
+    Q_bthd, K_bthd, V_bthd = jnp.split(QKV_b_t_3h_d, 3, axis=-2)
+    A_bthd = attn_qkv(cx, Q_bthd, K_bthd, V_bthd)
+    A_bts = jnp.reshape(A_bthd, (*BT, n_state))
     P_bts = dense(cx.scope('c_proj'), A_bts, n_state)
     return P_bts
 
@@ -193,19 +206,34 @@ def block(cx: VariableContext, X_bts):
 
 def transformer(cx: VariableContext, tok_bt):
     tok_bt = jnp.asarray(tok_bt)
-    B, T = tok_bt.shape
-    pos_bt = jax.lax.broadcasted_iota(jnp.int32, (B, T), 1)
-    tokenembs_qe = cx.get_variable('tokenembs', initializer=lambda: normc(cx.cfg.n_vocab, cx.cfg.n_embd) * 0.1)
-    posembs_pe = cx.get_variable('posembs', initializer=lambda: normc(cx.cfg.n_ctx, cx.cfg.n_embd) * 0.1)
+
+    # Vocab embedding
+    tokenembs_qe = cx.get_variable('wte', initializer=lambda: normc(cx.cfg.n_vocab, cx.cfg.n_embd) * 0.1)
     tokenemb_bte = tokenembs_qe[tok_bt]
-    assert isinstance(tok_bt, jnp.ndarray)
-    posemb_bte = posembs_pe[pos_bt]
-    H_bts = tokenemb_bte + posemb_bte
+    H_bts = tokenemb_bte
+
+    # Position embedding
+    if not cx.cfg.rotary:
+        BT = tok_bt.shape
+        pos_bt = jax.lax.broadcasted_iota(jnp.int32, BT, len(BT) - 1)
+        posembs_pe = cx.get_variable('wpe', initializer=lambda: normc(cx.cfg.n_ctx, cx.cfg.n_embd) * 0.1)
+        posemb_bte = posembs_pe[pos_bt]
+        H_bts = H_bts + posemb_bte
+    else:
+        raise NotImplementedError("TODO: Rotary embeddings")
+
+    # Pass the embedding through each block
     block_fn = jax.checkpoint(block)
     for layer in range(cx.cfg.n_layer):
         H_bts = block_fn(cx.scope(f'h{layer}'), H_bts)
+
+    # Do a final normalization
     H_bts = norm(cx.scope('ln_f'), H_bts)
+
+    # Multiply the activation by the transpose of the token embedding to get logits
     logits_btq = jnp.matmul(H_bts, tokenembs_qe.T)
+
+    # Return the logits
     return logits_btq
 
 def sparse_softmax_cross_entropy_with_logits(logits_btq, labels_bt):
