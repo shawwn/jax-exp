@@ -85,8 +85,9 @@ def reshape_seqs(X, seq_size):
 
 
 def train_test_split(codebook, text, n_ctx, train_percentage=0.75):
+    chunksize = n_ctx + 1
     if hasattr(text, 'shape'):
-        X_bt = reshape_seqs(text, n_ctx)
+        X_bt = reshape_seqs(text, chunksize)
         train_end = int(len(X_bt) * train_percentage)
         Xtr_bt = X_bt[:train_end]
         Xte_bt = X_bt[train_end:]
@@ -96,7 +97,6 @@ def train_test_split(codebook, text, n_ctx, train_percentage=0.75):
     splits = [mo.end() for mo in re.finditer(r'\n\n|\. |; |: ',text)]
     starts = np.concatenate([[0], splits])
     teststart = starts[int(len(starts) * train_percentage)]
-    chunksize = n_ctx + 1
     starts_train = starts[starts + chunksize <= teststart]
     starts_test = starts[starts + chunksize <= len(flatdata)]
     return (np.array([flatdata[s: s + chunksize] for s in starts_train]),
