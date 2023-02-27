@@ -260,7 +260,6 @@ def main():
         cfg.seed = npr.randint(2**31)
     npr.seed(cfg.seed)
     text, codebook, Xtr_bt, Xte_bt = dataset_util.load_dataset(text_file := np.random.choice(cfg.text_files), cfg.n_ctx)
-    cfg.n_vocab = codebook.size
     root_cx = create_root_context(cfg, 'model')
 
     def train_example_count():
